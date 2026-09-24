@@ -226,7 +226,9 @@ describe("readPage", () => {
       page: 2,
       subject: "Page 2",
     });
-    expect(result.refusals[0].reason).toContain("page 2");
+    expect(result.refusals[0].reason).toBe(
+      "We couldn't find a line-item table on page 2 (we look for a header row with Description and Qty columns), so no line items or totals were taken from it.",
+    );
   });
 
   it("getPage throws: PAGE_UNREADABLE, status refused, exception text not leaked", async () => {
@@ -304,6 +306,43 @@ describe("readPage", () => {
     expect(result.pageRead.table?.lineItems).toHaveLength(1);
     expect(result.totals.total).toEqual([]);
     expect(result.refusals.map((f) => f.id)).toEqual(["totals:total:p1:unparseable"]);
+  });
+
+  const emptyTableRefusal = {
+    id: "page:1:empty-table",
+    code: "NO_TABLE_FOUND",
+    scope: "page",
+    page: 1,
+    lineItemId: null,
+    subject: "Page 1",
+    reason: "We found the column headings on page 1 but no rows we could read under them, so no line items were taken from it.",
+    evidence: [],
+    calculation: null,
+  };
+
+  it("refuses a page whose table header has nothing under it", async () => {
+    const result = await readPage(pageOf([item("Acme Supplies", 42, 785), item("Tax Invoice", 42, 765), ...HEADER]), 1, false);
+
+    expect(result.pageRead.status).toBe("read");
+    expect(result.pageRead.table?.lineItems).toEqual([]);
+    expect(result.refusals).toEqual([emptyTableRefusal]);
+  });
+
+  it("refuses a page whose table header is followed only by a footer", async () => {
+    const result = await readPage(
+      pageOf([...HEADER, item("Warehouse notes: nothing picked this run.", 42.52, 600)]),
+      1,
+      false,
+    );
+
+    expect(result.pageRead.table?.lineItems).toEqual([]);
+    expect(result.refusals).toEqual([emptyTableRefusal]);
+  });
+
+  it("doesn't add an empty-table refusal when the rows under the header were refused one by one", async () => {
+    const result = await readPage(pageOf([...HEADER, item("Page 1 of 1", 42.52, 600)]), 1, false);
+
+    expect(result.refusals.map((f) => f.id)).toEqual(["row:p1-l1"]);
   });
 
   it("refuses a line-item row stranded below a sub-heading instead of dropping it", async () => {

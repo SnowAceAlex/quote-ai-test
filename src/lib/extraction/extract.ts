@@ -53,6 +53,32 @@ function strandedRowFindings(rows: Row[], table: TableParse, page: number): Find
     }));
 }
 
+function tableRefusals(rows: Row[], table: TableParse | null, n: number): Finding[] {
+  if (!table) {
+    return [
+      pageFinding(
+        `page:${n}:no-table`,
+        "NO_TABLE_FOUND",
+        n,
+        `We couldn't find a line-item table on page ${n} (we look for a header row with Description and Qty columns), so no line items or totals were taken from it.`,
+      ),
+    ];
+  }
+
+  const findings = [...table.rowFindings, ...strandedRowFindings(rows, table, n)];
+  if (table.lineItems.length === 0 && table.rowFindings.length === 0) {
+    findings.unshift(
+      pageFinding(
+        `page:${n}:empty-table`,
+        "NO_TABLE_FOUND",
+        n,
+        `We found the column headings on page ${n} but no rows we could read under them, so no line items were taken from it.`,
+      ),
+    );
+  }
+  return findings;
+}
+
 // Per-page reader: never throws - a page's own errors become a refusal instead.
 export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): Promise<PageReadResult> {
   const suffix = multiPage ? " The other pages were read normally." : "";
@@ -84,20 +110,9 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
     const { stated, refusals: totalsRefusals } = readTotals(below, n);
     const freeText = freeTextRows(rows, table);
 
-    const tableRefusals = table
-      ? [...table.rowFindings, ...strandedRowFindings(rows, table, n)]
-      : [
-          pageFinding(
-            `page:${n}:no-table`,
-            "NO_TABLE_FOUND",
-            n,
-            `We couldn't find a line-item table on page ${n} (we look for a header row with Description and Qty columns), so no line items were taken from it.`,
-          ),
-        ];
-
     return {
       pageRead: { page: n, status: "read", title, rows, table, freeText },
-      refusals: [...tableRefusals, ...totalsRefusals],
+      refusals: [...tableRefusals(rows, table, n), ...totalsRefusals],
       fields,
       totals: stated,
     };
