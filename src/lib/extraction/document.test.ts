@@ -1,11 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { readTitle, readFields, readTotals, freeTextRows, matchTotalsRow, mergeTotals, type StatedTotals } from "./document";
-import type { Row } from "./rows";
+import {
+  readTitle,
+  readFields,
+  readTotals,
+  freeTextRows,
+  matchTotalsRow,
+  matchTotalsLabel,
+  mergeTotals,
+  type StatedTotals,
+} from "./document";
+import { buildRows, type Row } from "./rows";
 import type { TableParse } from "./table";
 import type { SourcedMoney } from "./schema";
 
 function row(text: string): Row {
   return { y: 0, items: [], text };
+}
+
+function cellsRow(...cells: string[]): Row {
+  return buildRows(cells.map((str, i) => ({ str, x: 40 + i * 100, y: 0, width: 10 })))[0];
 }
 
 function fakeTable(headerIndex: number, endIndex: number): TableParse {
@@ -77,6 +90,7 @@ describe("matchTotalsRow", () => {
     ["Subtotal: $1.00", "subtotal"],
     ["Sub-total: $1.00", "subtotal"],
     ["SUBTOTAL: $1.00", "subtotal"],
+    ["Sub Total: $1.00", "subtotal"],
     ["Total (excl GST): $1.00", "subtotal"],
     ["Total excl. GST: $1.00", "subtotal"],
     ["GST: $1.00", "gst"],
@@ -110,6 +124,28 @@ describe("matchTotalsRow", () => {
       label: "Total (incl GST)",
       raw: "$3,747.85",
     });
+  });
+
+  it("reads a colon-less totals label in its own first cell", () => {
+    expect(matchTotalsRow(cellsRow("Total", "15", "$75.00"))).toEqual({ kind: "total", label: "Total", raw: "15 $75.00" });
+    expect(matchTotalsRow(cellsRow("Sub Total", "$50.00"))).toEqual({ kind: "subtotal", label: "Sub Total", raw: "$50.00" });
+  });
+
+  it("leaves a totals word alone when it isn't the whole first cell", () => {
+    expect(matchTotalsRow(cellsRow("Widget", "Total", "$5.00"))).toBeNull();
+    expect(matchTotalsRow(cellsRow("Total", "qty: 10"))).toBeNull();
+  });
+});
+
+describe("matchTotalsLabel", () => {
+  it.each([
+    ["Total", "total"],
+    ["Sub-total", "subtotal"],
+    ["GST (15%)", "gst"],
+    ["Total qty", null],
+    ["Total:", null],
+  ])("reads %j as %s", (label, kind) => {
+    expect(matchTotalsLabel(label)).toBe(kind);
   });
 });
 

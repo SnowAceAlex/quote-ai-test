@@ -432,6 +432,27 @@ describe("readPage", () => {
     expect(result.totals.total.map((t) => t.raw)).toEqual(["$260.00"]);
   });
 
+  it("refuses a colon-less Total row under the table as an unreadable total, like its colon form", async () => {
+    const result = await readPage(
+      pageOf([
+        ...HEADER,
+        ...dataRow("A1", "Widget A", "10", "$5.00", "$50.00", 643),
+        ...dataRow("A2", "Widget B", "5", "$5.00", "$25.00", 626),
+        item("Total", 93.54, 590),
+        item("15", 325.98, 590),
+        item("$75.00", 501.73, 590),
+      ]),
+      1,
+      false,
+    );
+
+    expect(result.pageRead.table?.lineItems.map((i) => i.code)).toEqual(["A1", "A2"]);
+    expect(result.totals.total).toEqual([]);
+    expect(result.refusals.map((f) => [f.id, f.reason])).toEqual([
+      ["totals:total:p1:unparseable", 'The total "15 $75.00" isn\'t a plain money amount, so we didn\'t use it.'],
+    ]);
+  });
+
   it("doesn't count a totals row laid out across the columns as a stranded line item", async () => {
     const result = await readPage(
       pageOf([

@@ -1,5 +1,5 @@
 import type { Row } from "./rows";
-import { matchTotalsRow } from "./document";
+import { matchTotalsLabel, matchTotalsRow } from "./document";
 import { parseMoney, parseQuantity } from "./values";
 import type { Evidence, Finding, LineItem, SourcedMoney, SourcedNumber, SourcedText } from "./schema";
 
@@ -19,8 +19,8 @@ export type TableParse = {
 };
 
 const DASHED_ROW = /^[-_=]+$/;
-// A footer label line: "Subtotal:", "GST (15%):", "Warehouse notes: ..."
-const LABEL_ROW = /^[A-Za-z][A-Za-z0-9 ()%]*:/;
+// A cell that opens with a label ("Subtotal:", "Warehouse notes: ..."), unlike "2:1" or "10:30".
+const LABEL_CELL = /^[A-Za-z][\w ()%.-]*:(\s|$)/;
 
 const ROLE_BY_LABEL: Record<string, Column["role"]> = {
   code: "code",
@@ -226,10 +226,12 @@ export function parseTable(rows: Row[], page: number): TableParse | null {
 
   for (const idx of dataRowIndices) {
     const row = rows[idx];
-    const labelled = LABEL_ROW.test(row.items[0].str.trim());
+    const firstCell = row.items[0].str.trim();
+    // Totals and label rows always end the table: many fill Description and Qty and would be read as line items.
+    const summary = LABEL_CELL.test(firstCell) || matchTotalsLabel(firstCell) !== null || matchTotalsRow(row) !== null;
     const farBelow = prevY !== null && prevY - row.y > 1.5 * baseline;
-    // A colon or a gap can't end the table on a row that reads as a line item, or that row would vanish.
-    if (matchTotalsRow(row) || ((labelled || farBelow) && !hasDescriptionAndQty(row, columns))) {
+    // A gap alone can't end the table on a row that reads as a line item, or that row would vanish.
+    if (summary || (farBelow && !hasDescriptionAndQty(row, columns))) {
       endIndex = idx;
       break;
     }

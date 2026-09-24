@@ -37,7 +37,7 @@ const TOTAL_KINDS: TotalKind[] = ["subtotal", "gst", "total"];
 
 const TOTAL_LABELS: Record<TotalKind, RegExp[]> = {
   // A total before GST is the subtotal; its own label stays visible in the evidence.
-  subtotal: [/^sub-?total$/i, /^total \(?excl\.? gst\)?$/i],
+  subtotal: [/^sub[- ]?total$/i, /^total \(?excl\.? gst\)?$/i],
   gst: [/^gst( \(\d+(\.\d+)?%\))?$/i, /^gst \d+(\.\d+)?%$/i],
   total: [/^(grand )?total( \(?incl\.? gst\)?)?$/i, /^total (due|payable)$/i],
 };
@@ -49,13 +49,22 @@ const TOTAL_NOUN: Record<TotalKind, string> = { subtotal: "subtotal", gst: "GST 
 
 export type TotalsRowMatch = { kind: TotalKind; label: string; raw: string };
 
+function tidyLabel(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+export function matchTotalsLabel(text: string): TotalKind | null {
+  const label = tidyLabel(text);
+  return TOTAL_KINDS.find((k) => TOTAL_LABELS[k].some((pattern) => pattern.test(label))) ?? null;
+}
+
 export function matchTotalsRow(row: Row): TotalsRowMatch | null {
   const match = LABELLED_ROW.exec(row.text);
-  if (!match) return null;
-  const label = match[1].trim().replace(/\s+/g, " ");
-  const kind = TOTAL_KINDS.find((k) => TOTAL_LABELS[k].some((pattern) => pattern.test(label)));
-  if (!kind) return null;
-  return { kind, label, raw: match[2].trim() };
+  const first = row.items[0]?.str.trim() ?? "";
+  // "Total | 15 | $75.00": without a colon, the label has to fill the first cell on its own.
+  const [labelText, raw] = match ? [match[1], match[2]] : [first, row.text.slice(first.length)];
+  const kind = matchTotalsLabel(labelText);
+  return kind ? { kind, label: tidyLabel(labelText), raw: raw.trim() } : null;
 }
 
 export type StatedTotals = {

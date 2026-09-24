@@ -279,6 +279,43 @@ describe("parseTable on synthetic rows", () => {
     expect(table?.rowFindings).toEqual([]);
   });
 
+  it.each([
+    ["a colon-less Total row after a gap", [item("Total", 93.54, 575), item("15", 325.98, 575), item("$75.00", 501.73, 575)]],
+    ["a Total qty: row right under the table", [item("Total qty:", 93.54, 626.3), item("20", 325.98, 626.3)]],
+    ["a Total qty: row after a gap", [item("Total qty:", 93.54, 575), item("20", 325.98, 575)]],
+    ["a bank-details footer", [item("Bank: ANZ 01-0123-0123456-00", 93.54, 626.3), item("Due: 20 Sep", 330, 626.3)]],
+  ])("%s ends the table instead of becoming a line item", (_, summary) => {
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      dataRow("A2", "Widget B", "10", "ea", "$5.00", "$50.00", 643.31),
+      summary,
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.code)).toEqual(["A1", "A2"]);
+    expect(table?.endIndex).toBe(rows.length - 1);
+    expect(table?.rowFindings).toEqual([]);
+  });
+
+  // "Mix ratio: 2:1" reads as a label on the whole row, so this only passes if the check looks at the first cell.
+  it.each(["Mix ratio 2:1 epoxy", "Mix ratio: 2:1 epoxy"])("a coded row described %j stays in the table", (description) => {
+    const y = 643.31;
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      [item("AB12", 42.52, y), item(description, 93.54, y), item("$15.00", 501.73, y)],
+      dataRow("A3", "Widget C", "30", "ea", "$5.00", "$150.00", 626.3),
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.code)).toEqual(["A1", "A3"]);
+    expect(table?.endIndex).toBe(rows.length);
+    expect(table?.rowFindings.map((f) => [f.id, f.code])).toEqual([["row:p1-l2", "ROW_UNPARSEABLE"]]);
+  });
+
   it("a Sub-total row right under the table ends it", () => {
     const rows = rowsFrom([
       HEADER,
