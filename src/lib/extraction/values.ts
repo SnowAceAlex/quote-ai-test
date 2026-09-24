@@ -13,10 +13,10 @@ export function parseMoney(raw: string): Parsed<{ cents: number; per: string | n
     return { ok: false, why: "is empty" };
   }
   if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
-    return { ok: false, why: "parentheses imply a negative amount, which we don't infer" };
+    return { ok: false, why: "is in brackets, which usually means a credit and we don't infer that" };
   }
   if (trimmed.startsWith("-")) {
-    return { ok: false, why: "negative amounts aren't supported" };
+    return { ok: false, why: "is negative, which we don't handle" };
   }
   if (EUROPEAN_MONEY_PATTERN.test(trimmed)) {
     return { ok: false, why: "uses a comma as the decimal separator" };
@@ -39,7 +39,7 @@ export function parseQuantity(raw: string): Parsed<number> {
     return { ok: false, why: "is empty" };
   }
   if (trimmed.startsWith("-")) {
-    return { ok: false, why: "negative quantities aren't supported" };
+    return { ok: false, why: "is negative, which we don't handle" };
   }
 
   const match = QUANTITY_PATTERN.exec(trimmed);

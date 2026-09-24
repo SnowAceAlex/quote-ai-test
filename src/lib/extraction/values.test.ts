@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { parseMoney, parseQuantity, parsePercent, formatCents } from "./values";
+import { parseMoney, parseQuantity, parsePercent, formatCents, type Parsed } from "./values";
+
+// The table and totals readers drop each why into this sentence.
+function refusalSentence(field: string, raw: string, result: Parsed<unknown>): string {
+  if (result.ok) throw new Error(`expected "${raw}" to be refused`);
+  return `The ${field} "${raw}" ${result.why}, so we didn't use it.`;
+}
 
 describe("parseMoney", () => {
   it.each([
@@ -31,20 +37,16 @@ describe("parseMoney", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("explains European separators in plain English", () => {
-    const result = parseMoney("$1.248,00");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.why).toMatch(/comma/i);
-    }
-  });
-
-  it("explains why negative amounts are refused", () => {
-    const result = parseMoney("-$5.00");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.why).toMatch(/negative/i);
-    }
+  it.each([
+    ["-$5.00", `The amount "-$5.00" is negative, which we don't handle, so we didn't use it.`],
+    [
+      "($5.00)",
+      `The amount "($5.00)" is in brackets, which usually means a credit and we don't infer that, so we didn't use it.`,
+    ],
+    ["$1.248,00", `The amount "$1.248,00" uses a comma as the decimal separator, so we didn't use it.`],
+    ["TBC", `The amount "TBC" isn't a plain money amount, so we didn't use it.`],
+  ])("explains refusing %j in a sentence", (raw, sentence) => {
+    expect(refusalSentence("amount", raw, parseMoney(raw))).toBe(sentence);
   });
 });
 
@@ -68,12 +70,11 @@ describe("parseQuantity", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("explains why negative quantities are refused", () => {
-    const result = parseQuantity("-3");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.why).toMatch(/negative/i);
-    }
+  it.each([
+    ["-3", `The quantity "-3" is negative, which we don't handle, so we didn't use it.`],
+    ["approx 20", `The quantity "approx 20" isn't a plain number, so we didn't use it.`],
+  ])("explains refusing %j in a sentence", (raw, sentence) => {
+    expect(refusalSentence("quantity", raw, parseQuantity(raw))).toBe(sentence);
   });
 });
 
