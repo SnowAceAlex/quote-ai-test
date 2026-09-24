@@ -53,8 +53,8 @@ describe("extractDocument on samples", () => {
     expect(docNoFields[0].raw).toBe("IB-STMT47");
   });
 
-  it("IB-56150: keeps all three stated totals as-is (no rules registered yet)", async () => {
-    const result = await extractDocument(loadSample("IB-56150.pdf"), "IB-56150.pdf");
+  it("IB-56150: reads all three stated totals before any rule runs", async () => {
+    const result = await extractDocument(loadSample("IB-56150.pdf"), "IB-56150.pdf", []);
     expect(result.totals.subtotal?.raw).toBe("$1,270.00");
     expect(result.totals.gst?.raw).toBe("$190.50");
     expect(result.totals.total?.raw).toBe("$1,501.80");
