@@ -1,12 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { extractDocument, readPage } from "./extract";
 import { PdfLoadError, type LoadedPage, type TextItem, loadPdf } from "./pdf";
 import { ExtractionResult, type Finding } from "./schema";
 import type { Rule } from "./rules/types";
 import { loadSample } from "./test-helpers";
-import { buildRows } from "./rows";
-import { parseTable } from "./table";
-import { freeTextRows } from "./document";
 
 const SAMPLES = ["IB-55871.pdf", "IB-55902.pdf", "IB-56010.pdf", "IB-56088.pdf", "IB-56150.pdf", "IB-STMT47.pdf"];
 
@@ -68,13 +65,8 @@ describe("extractDocument on samples", () => {
     expect(result.totals.total?.includesGst).toBeNull();
     expect(result.fields.some((f) => f.label === "Summary")).toBe(false);
 
-    const pdf = await loadPdf(loadSample("IB-56088.pdf"));
-    const page = await pdf.getPage(1);
-    const rows = buildRows(page.items);
-    const table = parseTable(rows, 1);
-    const freeText = freeTextRows(rows, table);
-
-    const freeTextStrings = freeText.map((r) => r.text);
+    const { pageRead } = await readPage(await loadPdf(loadSample("IB-56088.pdf")), 1, false);
+    const freeTextStrings = pageRead.freeText.map((r) => r.text);
     expect(freeTextStrings).toContainEqual("Summary: 9 cartons dispatched from Ironbark warehouse this run.");
     expect(freeTextStrings).toContainEqual("Warehouse notes: 11 cartons picked and loaded onto the truck.");
   });
@@ -237,6 +229,10 @@ describe("extractDocument with an injected fake rule", () => {
 describe("readPage", () => {
   const multiPageSuffix = " The other pages were read normally.";
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("0 items, no image: NO_TEXT_LAYER without the scanned-image wording", async () => {
     const pdf = { getPage: async (): Promise<LoadedPage> => ({ page: 3, items: [], imageCount: 0 }) };
     const result = await readPage(pdf, 3, false);
@@ -287,14 +283,17 @@ describe("readPage", () => {
     );
   });
 
-  it("getPage throws: PAGE_UNREADABLE, status refused, exception text not leaked", async () => {
+  it("getPage throws: PAGE_UNREADABLE, status refused, exception text not leaked but logged", async () => {
+    const thrown = new Error("some internal pdf.js secret detail");
     const pdf = {
       getPage: async (): Promise<LoadedPage> => {
-        throw new Error("some internal pdf.js secret detail");
+        throw thrown;
       },
     };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await readPage(pdf, 5, true);
 
+    expect(errorSpy).toHaveBeenCalledWith("Couldn't read page 5:", thrown);
     expect(result.pageRead.status).toBe("refused");
     expect(result.refusals[0].code).toBe("PAGE_UNREADABLE");
     expect(result.refusals[0].reason).not.toContain("some internal pdf.js secret detail");

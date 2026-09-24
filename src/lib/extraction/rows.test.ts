@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { getDocumentProxy } from "unpdf";
 import { loadPdf, PdfLoadError, type TextItem } from "./pdf";
 import { buildRows } from "./rows";
 import { loadSample } from "./test-helpers";
@@ -45,6 +46,22 @@ describe("loadPdf", () => {
     const page5 = await pdf.getPage(5);
     expect(page5.page).toBe(5);
     expect(page5.items.length).toBeGreaterThan(0);
+  });
+
+  it("walks the operator list for images only on pages without text", async () => {
+    const probe = await getDocumentProxy(loadSample("IB-55871.pdf"));
+    const spy = vi.spyOn(Object.getPrototypeOf(await probe.getPage(1)), "getOperatorList");
+    try {
+      const textPage = await (await loadPdf(loadSample("IB-55871.pdf"))).getPage(1);
+      expect(spy).not.toHaveBeenCalled();
+      expect(textPage.imageCount).toBe(0);
+
+      const scannedPage = await (await loadPdf(loadSample("IB-55902.pdf"))).getPage(1);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(scannedPage.imageCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("rejects random bytes with PdfLoadError PDF_CORRUPT", async () => {

@@ -21,7 +21,7 @@ export async function loadPdf(
 ): Promise<{ pageCount: number; getPage(n: number): Promise<LoadedPage> }> {
   let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
-    // Hand pdf.js a fresh Uint8Array: avoids detachment and rejects Node Buffers
+    // Fresh copy: pdf.js rejects Buffers and may detach what it's given
     pdf = await getDocumentProxy(new Uint8Array(bytes), { verbosity: 0 });
   } catch (error) {
     const code = error instanceof Error && error.name === "PasswordException" ? "PDF_ENCRYPTED" : "PDF_CORRUPT";
@@ -40,14 +40,18 @@ export async function loadPdf(
         items.push({ str: entry.str, x: entry.transform[4], y: entry.transform[5], width: entry.width });
       }
 
-      const ops = await page.getOperatorList();
-      const { OPS } = await getResolvedPDFJS();
-      const imageCount = ops.fnArray.filter(
-        (fn) =>
-          fn === OPS.paintImageXObject ||
-          fn === OPS.paintInlineImageXObject ||
-          fn === OPS.paintImageMaskXObject,
-      ).length;
+      // imageCount only explains an empty page, so skip the slow operator walk when there's text.
+      let imageCount = 0;
+      if (items.length === 0) {
+        const ops = await page.getOperatorList();
+        const { OPS } = await getResolvedPDFJS();
+        imageCount = ops.fnArray.filter(
+          (fn) =>
+            fn === OPS.paintImageXObject ||
+            fn === OPS.paintInlineImageXObject ||
+            fn === OPS.paintImageMaskXObject,
+        ).length;
+      }
 
       return { page: n, items, imageCount };
     },

@@ -79,7 +79,6 @@ function tableRefusals(rows: Row[], table: TableParse | null, n: number): Findin
   return findings;
 }
 
-// Per-page reader: never throws - a page's own errors become a refusal instead.
 export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): Promise<PageReadResult> {
   const suffix = multiPage ? " The other pages were read normally." : "";
   const emptyPageRead: PageRead = { page: n, status: "refused", title: null, rows: [], table: null, freeText: [] };
@@ -116,7 +115,8 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
       fields,
       totals: stated,
     };
-  } catch {
+  } catch (error) {
+    console.error(`Couldn't read page ${n}:`, error);
     // Don't leak the underlying exception's message into a user-facing reason.
     const reason = `Something in page ${n}'s content stopped us from reading it, so nothing on it was extracted.${suffix}`;
     return {

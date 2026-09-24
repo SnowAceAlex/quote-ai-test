@@ -9,7 +9,7 @@ export function buildRows(items: TextItem[]): Row[] {
   const groups: TextItem[][] = [];
   for (const item of sorted) {
     const current = groups.at(-1);
-    // compare against the row's first item, not the last one added, per spec
+    // Anchor to the row's first item so a row can't drift in y as items join it
     if (current && Math.abs(item.y - current[0].y) <= 2) {
       current.push(item);
     } else {
