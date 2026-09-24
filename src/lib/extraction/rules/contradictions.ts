@@ -32,12 +32,13 @@ export const contradictions: Rule = (ctx) => {
   const refusals = [...mentions.entries()]
     .filter(([, list]) => new Set(list.map((m) => m.value)).size > 1)
     .map(([noun, list]) => {
-      const stated = list.map((m) => `${m.value} ("${m.row.text}", page ${m.page})`).join(" and ");
+      const values = [...new Set(list.map((m) => m.value))];
+      const stated = `${values.slice(0, -1).join(", ")} in one place and ${values.at(-1)} in another`;
       return finding({
         id: `count:${noun}`,
         code: "CONTRADICTION",
         subject: `Number of ${plural(noun)}`,
-        reason: `The document gives different numbers of ${plural(noun)}: ${stated}. We can't tell which is right, so we haven't reported a ${noun} count.`,
+        reason: `The document gives the number of ${plural(noun)} as ${stated}. We can't tell which is right, so we haven't reported a ${noun} count.`,
         evidence: list.map((m) => rowEvidence(m.row, m.page)),
       });
     });

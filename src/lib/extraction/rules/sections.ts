@@ -42,7 +42,7 @@ export const sections: Rule = (ctx) => {
         code: "NOT_AN_INVOICE_PAGE",
         scope: "page",
         page: page.page,
-        subject: `Page ${page.page}: ${page.title}`,
+        subject: `Page ${page.page}`,
         reason: `Page ${page.page} is titled "${page.title}", which isn't one of the numbered invoices (1–${of}). Its lines are listed, but they may repeat or cancel out invoice lines, so check them before adding anything up.`,
         evidence: [{ page: page.page, sourceText: page.title }],
       }),
