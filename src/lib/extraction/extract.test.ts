@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { extractDocument, readPage, mergeTotals } from "./extract";
-import { PdfLoadError, type LoadedPage } from "./pdf";
+import { PdfLoadError, type LoadedPage, loadPdf } from "./pdf";
 import { ExtractionResult, type SourcedMoney, type Totals } from "./schema";
 import type { Rule } from "./rules/types";
 import { loadSample } from "./test-helpers";
+import { buildRows } from "./rows";
+import { parseTable } from "./table";
+import { freeTextRows } from "./document";
 
 const SAMPLES = ["IB-55871.pdf", "IB-55902.pdf", "IB-56010.pdf", "IB-56088.pdf", "IB-56150.pdf", "IB-STMT47.pdf"];
 
@@ -64,8 +67,15 @@ describe("extractDocument on samples", () => {
     expect(result.totals.total?.includesGst).toBeNull();
     expect(result.fields.some((f) => f.label === "Summary")).toBe(false);
 
-    const ctxFreeText = result.pages.length; // sanity: pages exist
-    expect(ctxFreeText).toBe(1);
+    const pdf = await loadPdf(loadSample("IB-56088.pdf"));
+    const page = await pdf.getPage(1);
+    const rows = buildRows(page.items);
+    const table = parseTable(rows, 1);
+    const freeText = freeTextRows(rows, table);
+
+    const freeTextStrings = freeText.map((r) => r.text);
+    expect(freeTextStrings).toContainEqual("Summary: 9 cartons dispatched from Ironbark warehouse this run.");
+    expect(freeTextStrings).toContainEqual("Warehouse notes: 11 cartons picked and loaded onto the truck.");
   });
 
   for (const name of SAMPLES) {
@@ -132,6 +142,33 @@ describe("extractDocument with an injected fake rule", () => {
     await expect(extractDocument(loadSample("IB-55871.pdf"), "IB-55871.pdf", [throwingRule])).rejects.toThrow(
       "rule blew up",
     );
+  });
+
+  it("outcome is still complete when rule returns only warnings and no refusals", async () => {
+    const warningRule: Rule = () => ({
+      refusals: [],
+      warnings: [
+        {
+          id: "test:warning-only",
+          code: "AMBIGUOUS",
+          scope: "document",
+          page: null,
+          lineItemId: null,
+          subject: "Test warning",
+          reason: "This is a test warning with no refusals.",
+          evidence: [],
+          calculation: null,
+        },
+      ],
+      refuseTotals: [],
+      refuseAmounts: [],
+      lineWarnings: [],
+    });
+
+    const result = await extractDocument(loadSample("IB-55871.pdf"), "IB-55871.pdf", [warningRule]);
+
+    expect(result.outcome).toBe("complete");
+    expect(result.warnings).toContainEqual(expect.objectContaining({ id: "test:warning-only" }));
   });
 });
 

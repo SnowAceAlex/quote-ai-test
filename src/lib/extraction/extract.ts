@@ -1,7 +1,7 @@
 import { loadPdf, type LoadedPage } from "./pdf";
 import { buildRows } from "./rows";
 import { parseTable } from "./table";
-import { readTitle, readFields, readTotals, freeTextRows } from "./document";
+import { readTitle, readFields, readTotals, freeTextRows, type TotalKind } from "./document";
 import { rules } from "./rules/index";
 import type { PageRead, Rule, RuleContext } from "./rules/types";
 import {
@@ -110,7 +110,6 @@ function dedupeFields(fields: SourcedText[]): SourcedText[] {
   return result;
 }
 
-type TotalKind = "subtotal" | "gst" | "total";
 const TOTAL_SUBJECT: Record<TotalKind, string> = { subtotal: "Subtotal", gst: "GST", total: "Total" };
 
 function englishList(parts: string[]): string {

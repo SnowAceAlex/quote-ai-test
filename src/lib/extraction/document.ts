@@ -30,7 +30,7 @@ export function readFields(rows: Row[], page: number): SourcedText[] {
   return fields;
 }
 
-type TotalKind = "subtotal" | "gst" | "total";
+export type TotalKind = "subtotal" | "gst" | "total";
 
 function totalKindForLabel(label: string): TotalKind | null {
   // "Total (incl GST)" both starts with "Total" and contains "GST" - the prefix wins so it
@@ -48,9 +48,9 @@ function includesGstFromLabel(label: string): boolean | null {
   return null;
 }
 
-export type TotalsRowMatch = { kind: TotalKind; label: string; raw: string; cents: number; per: string | null };
+type TotalsRowMatch = { kind: TotalKind; label: string; raw: string; cents: number; per: string | null };
 
-export function isTotalsRow(row: Row): TotalsRowMatch | null {
+function isTotalsRow(row: Row): TotalsRowMatch | null {
   const match = TOTALS_ROW.exec(row.text);
   if (!match) return null;
   const [, labelRaw, raw] = match;
