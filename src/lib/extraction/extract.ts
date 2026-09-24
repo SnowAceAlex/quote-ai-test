@@ -106,7 +106,9 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
 
     const title = readTitle(above);
     const fields = readFields(above, n);
-    const { stated, refusals: totalsRefusals } = readTotals(below, n);
+    // A totals row can sit above the table header too (e.g. "Total due" near the top); read it like one below so it isn't silently dropped.
+    const totalsRows = table ? [...above.slice(2), ...below] : below;
+    const { stated, refusals: totalsRefusals } = readTotals(totalsRows, n);
     const freeText = freeTextRows(rows, table);
 
     return {

@@ -4,6 +4,7 @@ import { PdfLoadError, type LoadedPage, type TextItem, loadPdf } from "./pdf";
 import { ExtractionResult, type Finding } from "./schema";
 import type { Rule } from "./rules/types";
 import { loadSample } from "./test-helpers";
+import { mergeTotals } from "./document";
 
 const SAMPLES = ["IB-55871.pdf", "IB-55902.pdf", "IB-56010.pdf", "IB-56088.pdf", "IB-56150.pdf", "IB-STMT47.pdf"];
 
@@ -446,5 +447,58 @@ describe("readPage", () => {
 
     expect(result.refusals).toEqual([]);
     expect(result.totals.total.map((t) => t.raw)).toEqual(["$57.50"]);
+  });
+
+  it("reads a totals row stated above the table when nothing states it below", async () => {
+    const result = await readPage(
+      pageOf([
+        item("Acme Supplies", 42, 785),
+        item("Tax Invoice", 42, 765),
+        item("Total due: $500.00", 42, 745),
+        ...HEADER,
+        ...dataRow("A1", "Widget", "10", "$5.00", "$50.00", 643),
+      ]),
+      1,
+      false,
+    );
+
+    const { totals, refusals } = mergeTotals([result.totals]);
+    expect(totals.total?.raw).toBe("$500.00");
+    expect(totals.total?.evidence).toEqual({ page: 1, sourceText: "Total due: $500.00" });
+    expect(refusals).toEqual([]);
+  });
+
+  it("refuses as a contradiction when a totals row above the table conflicts with one below it", async () => {
+    const result = await readPage(
+      pageOf([
+        item("Acme Supplies", 42, 785),
+        item("Tax Invoice", 42, 765),
+        item("Total due: $500.00", 42, 745),
+        ...HEADER,
+        ...dataRow("A1", "Widget", "10", "$5.00", "$50.00", 643),
+        item("Total: $450.00", 337, 600),
+      ]),
+      1,
+      false,
+    );
+
+    const { totals, refusals } = mergeTotals([result.totals]);
+    expect(totals.total).toBeNull();
+    expect(refusals).toEqual([
+      {
+        id: "totals:total:conflict",
+        code: "CONTRADICTION",
+        scope: "document",
+        page: 1,
+        lineItemId: null,
+        subject: "Total",
+        reason: "Total is stated as $500.00 and $450.00 on page 1, so we can't tell which is right.",
+        evidence: [
+          { page: 1, sourceText: "Total due: $500.00" },
+          { page: 1, sourceText: "Total: $450.00" },
+        ],
+        calculation: null,
+      },
+    ]);
   });
 });
