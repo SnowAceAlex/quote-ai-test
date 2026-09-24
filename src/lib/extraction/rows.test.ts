@@ -14,6 +14,11 @@ describe("loadPdf", () => {
     );
   });
 
+  it("accepts Node Buffers as well as Uint8Array", async () => {
+    const pdf = await loadPdf(Buffer.from(loadSample("IB-55871.pdf")));
+    expect(pdf.pageCount).toBe(1);
+  });
+
   it("reports IB-55902 page 1 as a scanned image with no text layer", async () => {
     const pdf = await loadPdf(loadSample("IB-55902.pdf"));
     const page = await pdf.getPage(1);
@@ -42,10 +47,9 @@ describe("loadPdf", () => {
 
   it("rejects random bytes with PdfLoadError PDF_CORRUPT", async () => {
     const bytes = new TextEncoder().encode("this is definitely not a pdf file");
-    await expect(loadPdf(bytes)).rejects.toMatchObject(
-      expect.objectContaining({ code: "PDF_CORRUPT" }),
-    );
-    await expect(loadPdf(bytes)).rejects.toBeInstanceOf(PdfLoadError);
+    const p = loadPdf(bytes);
+    await expect(p).rejects.toBeInstanceOf(PdfLoadError);
+    await expect(p).rejects.toMatchObject({ code: "PDF_CORRUPT" });
   });
 });
 

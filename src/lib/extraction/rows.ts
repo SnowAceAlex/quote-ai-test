@@ -4,7 +4,7 @@ export type Row = { y: number; items: TextItem[]; text: string };
 
 export function buildRows(items: TextItem[]): Row[] {
   const nonBlank = items.filter((item) => item.str.trim() !== "");
-  const sorted = [...nonBlank].sort((a, b) => b.y - a.y);
+  const sorted = nonBlank.sort((a, b) => b.y - a.y);
 
   const groups: TextItem[][] = [];
   for (const item of sorted) {

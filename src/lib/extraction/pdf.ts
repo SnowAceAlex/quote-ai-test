@@ -21,8 +21,8 @@ export async function loadPdf(
 ): Promise<{ pageCount: number; getPage(n: number): Promise<LoadedPage> }> {
   let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
-    // pdf.js can detach the buffer it's given, so hand it a copy and leave the caller's bytes usable
-    pdf = await getDocumentProxy(bytes.slice(), { verbosity: 0 });
+    // Hand pdf.js a fresh Uint8Array: avoids detachment and rejects Node Buffers
+    pdf = await getDocumentProxy(new Uint8Array(bytes), { verbosity: 0 });
   } catch (error) {
     const code = error instanceof Error && error.name === "PasswordException" ? "PDF_ENCRYPTED" : "PDF_CORRUPT";
     throw new PdfLoadError(code, error);
