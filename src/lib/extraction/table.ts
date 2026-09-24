@@ -239,6 +239,8 @@ export function parseTable(rows: Row[], page: number): TableParse | null {
     const row = rows[idx];
     const firstCell = row.items[0].str.trim();
     // Totals and label rows always end the table: many fill Description and Qty and would be read as line items.
+    // Three different cell layouts, three checks: LABEL_CELL for "Label: value" in one cell, matchTotalsLabel for
+    // a bare totals word filling the first cell, matchTotalsRow for a totals row split across cells with no colon.
     const summary = LABEL_CELL.test(firstCell) || matchTotalsLabel(firstCell) !== null || matchTotalsRow(row) !== null;
     const farBelow = prevY !== null && prevY - row.y > 1.5 * baseline;
     // A gap alone can't end the table on a row that reads as a line item, or that row would vanish.

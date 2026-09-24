@@ -132,9 +132,17 @@ function englishList(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-function conflictFinding(kind: TotalKind, page: number, values: Statement[]): Finding {
+// Shared by two cases that must both name every figure: readable statements disagreeing with each
+// other (unreadable = []), and a readable statement sharing its page with an unreadable one.
+function conflictFinding(kind: TotalKind, page: number, values: Statement[], unreadable: Statement[] = []): Finding {
   const subject = TOTAL_SUBJECT[kind];
-  const raws = [...new Set(values.map((v) => v.raw))];
+  const noun = TOTAL_NOUN[kind];
+  const readableRaws = [...new Set(values.map((v) => v.raw))];
+  const reason =
+    unreadable.length > 0
+      ? `Page ${page} states the ${noun} as ${englishList(readableRaws)} and also as ` +
+        `${englishList(unreadable.map((v) => `"${v.raw}"`))}, which we couldn't read, so we didn't use either.`
+      : `${subject} is stated as ${englishList(readableRaws)} on page ${page}, so we can't tell which is right.`;
   return {
     id: `totals:${kind}:conflict`,
     code: "CONTRADICTION",
@@ -142,8 +150,8 @@ function conflictFinding(kind: TotalKind, page: number, values: Statement[]): Fi
     page,
     lineItemId: null,
     subject,
-    reason: `${subject} is stated as ${englishList(raws)} on page ${page}, so we can't tell which is right.`,
-    evidence: values.map((v) => v.evidence),
+    reason,
+    evidence: [...values, ...unreadable].map((v) => v.evidence),
     calculation: null,
   };
 }
@@ -177,7 +185,12 @@ function resolveKind<T extends Statement>(
   if (pages.length > 1) return { value: null, refusal: perPageFinding(kind, pages, all) };
   if (new Set(values.map((v) => v.raw)).size > 1) return { value: null, refusal: conflictFinding(kind, pages[0], values) };
   // The unreadable statement could be the right figure, so the readable ones can't stand alone.
-  if (unreadable.length > 0) return { value: null, refusal: null };
+  // When there's also a readable one here, readTotals' per-unreadable refusal alone would leave it
+  // unmentioned, so name both; with no readable statement, that refusal already covers this page.
+  if (unreadable.length > 0) {
+    if (values.length === 0) return { value: null, refusal: null };
+    return { value: null, refusal: conflictFinding(kind, pages[0], values, unreadable) };
+  }
   return { value: values[0], refusal: null };
 }
 

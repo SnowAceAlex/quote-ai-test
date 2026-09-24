@@ -411,10 +411,25 @@ describe("mergeTotals", () => {
     ]);
   });
 
-  it("leaves a total null when another statement of it on the page is unreadable", () => {
+  it("names both figures when an unreadable total blocks a readable one on the same page", () => {
     const { totals, refusals } = mergeTotals([readPageTotals(1, "Total: $1.501,80", "Total due: $1,400.00")]);
     expect(totals.total).toBeNull();
-    expect(refusals).toEqual([]);
+    expect(refusals).toEqual([
+      {
+        id: "totals:total:conflict",
+        code: "CONTRADICTION",
+        scope: "document",
+        page: 1,
+        lineItemId: null,
+        subject: "Total",
+        reason: 'Page 1 states the total as $1,400.00 and also as "$1.501,80", which we couldn\'t read, so we didn\'t use either.',
+        evidence: [
+          { page: 1, sourceText: "Total due: $1,400.00" },
+          { page: 1, sourceText: "Total: $1.501,80" },
+        ],
+        calculation: null,
+      },
+    ]);
   });
 
   it("still reports two readable figures that disagree next to an unreadable one", () => {
