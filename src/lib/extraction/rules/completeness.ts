@@ -96,7 +96,35 @@ function missingDocumentTotal(ctx: RuleContext): Finding[] {
   ];
 }
 
+const LABELLED_MONEY = /^([A-Za-z][\w ()%.-]*):\s*(\$\S+)$/;
+
+// Totals only recognise a fixed vocabulary; anything else with a price on it must not vanish.
+function unrecognisedFigures(ctx: RuleContext): Finding[] {
+  return ctx.pages.flatMap((p) =>
+    p.freeText
+      .filter((r) => LABELLED_MONEY.test(r.text))
+      .map((r, i) => {
+        const label = r.text.match(LABELLED_MONEY)![1];
+        return finding({
+          id: `unrecognised:p${p.page}:${i + 1}`,
+          code: "AMBIGUOUS",
+          scope: "field",
+          page: p.page,
+          subject: label,
+          reason: `The document shows "${r.text}", but we don't recognise "${label}" as a subtotal, GST or total, so we haven't used that figure.`,
+          evidence: [rowEvidence(r, p.page)],
+        });
+      }),
+  );
+}
+
 export const completeness: Rule = (ctx) => ({
-  refusals: [...missingAmounts(ctx), ...missingGst(ctx), ...ambiguousWeights(ctx), ...missingDocumentTotal(ctx)],
+  refusals: [
+    ...missingAmounts(ctx),
+    ...missingGst(ctx),
+    ...ambiguousWeights(ctx),
+    ...missingDocumentTotal(ctx),
+    ...unrecognisedFigures(ctx),
+  ],
   warnings: [],
 });

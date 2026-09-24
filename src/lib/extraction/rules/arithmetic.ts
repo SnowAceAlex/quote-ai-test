@@ -4,6 +4,8 @@ import type { TotalKind } from "../document";
 import type { Rule, RuleContext } from "./types";
 import { finding, toCents } from "./finding";
 
+const DISCOUNT = /disc|less|rebate|%/i;
+
 function lineLabel(item: LineItem): string {
   return item.code ?? item.description;
 }
@@ -48,8 +50,12 @@ export const arithmetic: Rule = (ctx) => {
   const refuseTotals: TotalKind[] = [];
   const refuseAmounts: string[] = [];
 
+  // A discount column means qty × price legitimately differs from the amount.
+  const discounted = new Set(
+    ctx.pages.filter((p) => p.table?.columns.some((c) => c.role === "other" && DISCOUNT.test(c.label))).map((p) => p.page),
+  );
   for (const item of ctx.lineItems) {
-    const bad = checkLine(item);
+    const bad = discounted.has(item.page) ? null : checkLine(item);
     if (bad) {
       refusals.push(bad);
       refuseAmounts.push(item.id);

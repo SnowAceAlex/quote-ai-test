@@ -121,7 +121,7 @@ export function UploadPanel() {
         )}
 
         {state.status === "failed" && (
-          <div role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-950/30">
+          <div role="alert" data-testid="upload-failure" className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-950/30">
             <h2 className="font-medium">{state.failure.title}</h2>
             <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{state.failure.explanation}</p>
             {(state.failure.status || state.failure.code) && (
