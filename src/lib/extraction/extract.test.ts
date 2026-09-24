@@ -349,7 +349,7 @@ describe("readPage", () => {
     );
 
     expect(result.fields.map((f) => f.label)).toEqual(["Invoice No"]);
-    expect(result.totals).toEqual({ subtotal: [], gst: [], total: [] });
+    expect(result.totals).toEqual({ subtotal: [], gst: [], total: [], unreadable: { subtotal: [], gst: [], total: [] } });
   });
 
   it("an unreadable total below the table becomes a refusal on that page", async () => {

@@ -67,11 +67,18 @@ export function matchTotalsRow(row: Row): TotalsRowMatch | null {
   return kind ? { kind, label: tidyLabel(labelText), raw: raw.trim() } : null;
 }
 
+type Statement = { raw: string; evidence: Evidence };
+
 export type StatedTotals = {
   subtotal: SourcedMoney[];
   gst: NonNullable<Totals["gst"]>[];
   total: NonNullable<Totals["total"]>[];
+  unreadable: Record<TotalKind, Statement[]>;
 };
+
+export function noTotalsStated(): StatedTotals {
+  return { subtotal: [], gst: [], total: [], unreadable: { subtotal: [], gst: [], total: [] } };
+}
 
 function unparseableTotalFinding(id: string, found: TotalsRowMatch, why: string, evidence: Evidence): Finding {
   return {
@@ -88,7 +95,7 @@ function unparseableTotalFinding(id: string, found: TotalsRowMatch, why: string,
 }
 
 export function readTotals(rows: Row[], page: number): { stated: StatedTotals; refusals: Finding[] } {
-  const stated: StatedTotals = { subtotal: [], gst: [], total: [] };
+  const stated = noTotalsStated();
   const refusals: Finding[] = [];
   const unparseableCount: Record<TotalKind, number> = { subtotal: 0, gst: 0, total: 0 };
 
@@ -104,6 +111,7 @@ export function readTotals(rows: Row[], page: number): { stated: StatedTotals; r
       const n = ++unparseableCount[found.kind];
       const id = `totals:${found.kind}:p${page}:unparseable${n > 1 ? `:${n}` : ""}`;
       refusals.push(unparseableTotalFinding(id, found, why, evidence));
+      stated.unreadable[found.kind].push({ raw: found.raw, evidence });
       continue;
     }
 
@@ -121,7 +129,7 @@ function englishList(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-function conflictFinding(kind: TotalKind, page: number, values: Array<{ raw: string; evidence: Evidence }>): Finding {
+function conflictFinding(kind: TotalKind, page: number, values: Statement[]): Finding {
   const subject = TOTAL_SUBJECT[kind];
   const raws = [...new Set(values.map((v) => v.raw))];
   return {
@@ -137,7 +145,7 @@ function conflictFinding(kind: TotalKind, page: number, values: Array<{ raw: str
   };
 }
 
-function perPageFinding(kind: TotalKind, pages: number[], values: Array<{ raw: string; evidence: Evidence }>): Finding {
+function perPageFinding(kind: TotalKind, pages: number[], values: Statement[]): Finding {
   const noun = TOTAL_NOUN[kind];
   return {
     id: `totals:${kind}:per-page`,
@@ -155,24 +163,32 @@ function perPageFinding(kind: TotalKind, pages: number[], values: Array<{ raw: s
 }
 
 // Figures on different pages may belong to different invoices, so even matching ones aren't merged.
-function resolveKind<T extends { raw: string; evidence: Evidence }>(
+function resolveKind<T extends Statement>(
   kind: TotalKind,
   values: T[],
+  unreadable: Statement[],
 ): { value: T | null; refusal: Finding | null } {
-  if (values.length === 0) return { value: null, refusal: null };
-  const pages = [...new Set(values.map((v) => v.evidence.page))];
-  if (pages.length > 1) return { value: null, refusal: perPageFinding(kind, pages, values) };
-  if (new Set(values.map((v) => v.raw)).size === 1) return { value: values[0], refusal: null };
-  return { value: null, refusal: conflictFinding(kind, pages[0], values) };
+  const all = [...values, ...unreadable].sort((a, b) => a.evidence.page - b.evidence.page);
+  if (all.length === 0) return { value: null, refusal: null };
+  const pages = [...new Set(all.map((v) => v.evidence.page))];
+  if (pages.length > 1) return { value: null, refusal: perPageFinding(kind, pages, all) };
+  if (new Set(values.map((v) => v.raw)).size > 1) return { value: null, refusal: conflictFinding(kind, pages[0], values) };
+  // The unreadable statement could be the right figure, so the readable ones can't stand alone.
+  if (unreadable.length > 0) return { value: null, refusal: null };
+  return { value: values[0], refusal: null };
 }
 
 export function mergeTotals(perPage: StatedTotals[]): { totals: Totals; refusals: Finding[] } {
-  const subtotal = resolveKind("subtotal", perPage.flatMap((p) => p.subtotal));
-  const gst = resolveKind("gst", perPage.flatMap((p) => p.gst));
-  const total = resolveKind("total", perPage.flatMap((p) => p.total));
+  const unreadable = (kind: TotalKind) => perPage.flatMap((p) => p.unreadable[kind]);
+  const subtotal = resolveKind("subtotal", perPage.flatMap((p) => p.subtotal), unreadable("subtotal"));
+  const gst = resolveKind("gst", perPage.flatMap((p) => p.gst), unreadable("gst"));
+  const stated = perPage.flatMap((p) => p.total);
+  const total = resolveKind("total", stated, unreadable("total"));
+  // A figure repeated on the page is one total, so any of its labels saying incl GST counts.
+  const totalValue = total.value && stated.some((t) => t.includesGst) ? { ...total.value, includesGst: true } : total.value;
 
   return {
-    totals: { subtotal: subtotal.value, gst: gst.value, total: total.value },
+    totals: { subtotal: subtotal.value, gst: gst.value, total: totalValue },
     refusals: [subtotal.refusal, gst.refusal, total.refusal].filter((f): f is Finding => f !== null),
   };
 }

@@ -211,7 +211,10 @@ describe("readTotals", () => {
       row("Warehouse notes: 11 cartons picked and loaded onto the truck."),
       row("Payment due 20 days from invoice date."),
     ];
-    expect(readTotals(rows, 1)).toEqual({ stated: { subtotal: [], gst: [], total: [] }, refusals: [] });
+    expect(readTotals(rows, 1)).toEqual({
+      stated: { subtotal: [], gst: [], total: [], unreadable: { subtotal: [], gst: [], total: [] } },
+      refusals: [],
+    });
   });
 
   it("returns every statement of a kind, not just the first", () => {
@@ -259,6 +262,15 @@ describe("readTotals", () => {
     const { refusals } = readTotals([row("Total: TBC"), row("Total due: TBC")], 1);
     expect(refusals.map((f) => f.id)).toEqual(["totals:total:p1:unparseable", "totals:total:p1:unparseable:2"]);
   });
+
+  it("reports each unreadable statement under its kind", () => {
+    const { stated } = readTotals([row("Total: TBC"), row("GST: $1.00")], 3);
+    expect(stated.unreadable).toEqual({
+      subtotal: [],
+      gst: [],
+      total: [{ raw: "TBC", evidence: { page: 3, sourceText: "Total: TBC" } }],
+    });
+  });
 });
 
 describe("mergeTotals", () => {
@@ -266,12 +278,18 @@ describe("mergeTotals", () => {
     return { value, raw, per: null, evidence: { page, sourceText: `${label}: ${raw}` } };
   }
 
+  const noneUnreadable = { subtotal: [], gst: [], total: [] };
+
   function statedTotal(...values: SourcedMoney[]): StatedTotals {
-    return { subtotal: [], gst: [], total: values.map((v) => ({ ...v, includesGst: null })) };
+    return { subtotal: [], gst: [], total: values.map((v) => ({ ...v, includesGst: null })), unreadable: noneUnreadable };
   }
 
   function statedSubtotal(...values: SourcedMoney[]): StatedTotals {
-    return { subtotal: values, gst: [], total: [] };
+    return { subtotal: values, gst: [], total: [], unreadable: noneUnreadable };
+  }
+
+  function readPageTotals(page: number, ...texts: string[]): StatedTotals {
+    return readTotals(texts.map(row), page).stated;
   }
 
   it("keeps a figure the whole document states once", () => {
@@ -352,8 +370,8 @@ describe("mergeTotals", () => {
   it("names the GST figure in a per-page refusal", () => {
     const gst = (page: number) => ({ ...money("$15.00", 15, page, "GST"), ratePercent: null });
     const { refusals } = mergeTotals([
-      { subtotal: [], gst: [gst(1)], total: [] },
-      { subtotal: [], gst: [gst(2)], total: [] },
+      { subtotal: [], gst: [gst(1)], total: [], unreadable: noneUnreadable },
+      { subtotal: [], gst: [gst(2)], total: [], unreadable: noneUnreadable },
     ]);
     expect(refusals[0].reason).toBe(
       "Pages 1 and 2 each state a GST amount ($15.00, $15.00). They may be totals for separate invoices, so we haven't reported one GST amount for the whole document.",
@@ -363,6 +381,52 @@ describe("mergeTotals", () => {
   it("leaves a kind null with no refusal when no page states it", () => {
     const { totals, refusals } = mergeTotals([statedTotal()]);
     expect(totals).toEqual({ subtotal: null, gst: null, total: null });
+    expect(refusals).toEqual([]);
+  });
+
+  it("counts an unreadable total on one page against a readable one on another", () => {
+    const { totals, refusals } = mergeTotals([readPageTotals(1, "Total: TBC"), readPageTotals(2, "Total: $4.00")]);
+    expect(totals.total).toBeNull();
+    expect(refusals).toEqual([
+      {
+        id: "totals:total:per-page",
+        code: "AMBIGUOUS",
+        scope: "document",
+        page: null,
+        lineItemId: null,
+        subject: "Total",
+        reason:
+          "Pages 1 and 2 each state a total (TBC, $4.00). They may be totals for separate invoices, so we haven't reported one total for the whole document.",
+        evidence: [
+          { page: 1, sourceText: "Total: TBC" },
+          { page: 2, sourceText: "Total: $4.00" },
+        ],
+        calculation: null,
+      },
+    ]);
+  });
+
+  it("leaves a total null when another statement of it on the page is unreadable", () => {
+    const { totals, refusals } = mergeTotals([readPageTotals(1, "Total: $1.501,80", "Total due: $1,400.00")]);
+    expect(totals.total).toBeNull();
+    expect(refusals).toEqual([]);
+  });
+
+  it("still reports two readable figures that disagree next to an unreadable one", () => {
+    const { totals, refusals } = mergeTotals([readPageTotals(1, "Total: TBC", "Total: $5.00", "Total due: $6.00")]);
+    expect(totals.total).toBeNull();
+    expect(refusals.map((f) => f.id)).toEqual(["totals:total:conflict"]);
+  });
+
+  it("keeps the first of two matching totals but takes incl GST from either label", () => {
+    const { totals, refusals } = mergeTotals([readPageTotals(1, "Total due: $57.50", "Total (incl GST): $57.50")]);
+    expect(totals.total).toEqual({
+      value: 57.5,
+      raw: "$57.50",
+      per: null,
+      includesGst: true,
+      evidence: { page: 1, sourceText: "Total due: $57.50" },
+    });
     expect(refusals).toEqual([]);
   });
 });

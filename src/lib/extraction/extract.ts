@@ -1,7 +1,16 @@
 import { loadPdf, type LoadedPage } from "./pdf";
 import { buildRows, type Row } from "./rows";
 import { hasDescriptionAndQty, parseTable, type TableParse } from "./table";
-import { readTitle, readFields, readTotals, freeTextRows, mergeTotals, matchTotalsRow, type StatedTotals } from "./document";
+import {
+  readTitle,
+  readFields,
+  readTotals,
+  freeTextRows,
+  mergeTotals,
+  matchTotalsRow,
+  noTotalsStated,
+  type StatedTotals,
+} from "./document";
 import { rules } from "./rules/index";
 import type { LineWarning, PageRead, Rule, RuleContext } from "./rules/types";
 import {
@@ -82,7 +91,6 @@ function tableRefusals(rows: Row[], table: TableParse | null, n: number): Findin
 export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): Promise<PageReadResult> {
   const suffix = multiPage ? " The other pages were read normally." : "";
   const emptyPageRead: PageRead = { page: n, status: "refused", title: null, rows: [], table: null, freeText: [] };
-  const emptyTotals: StatedTotals = { subtotal: [], gst: [], total: [] };
 
   try {
     const loaded = await pdf.getPage(n);
@@ -95,7 +103,7 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
         pageRead: emptyPageRead,
         refusals: [pageFinding(`page:${n}:no-text`, "NO_TEXT_LAYER", n, reason)],
         fields: [],
-        totals: emptyTotals,
+        totals: noTotalsStated(),
       };
     }
 
@@ -125,7 +133,7 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
       pageRead: emptyPageRead,
       refusals: [pageFinding(`page:${n}:unreadable`, "PAGE_UNREADABLE", n, reason)],
       fields: [],
-      totals: emptyTotals,
+      totals: noTotalsStated(),
     };
   }
 }
