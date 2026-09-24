@@ -1,13 +1,16 @@
 import type { Row } from "./rows";
 import type { TableParse } from "./table";
-import { parseMoney, parsePercent } from "./values";
+import { parseMoney, parsePercent, refusalReason } from "./values";
 import type { Evidence, Finding, SourcedMoney, SourcedText, Totals } from "./schema";
+
+// Rows 0-1 of a page are the company name and the document title.
+export const HEADING_ROWS = 2;
 
 const FIELD_ROW = /^([^:]{1,40}):\s+(.+)$/;
 const LABELLED_ROW = /^([^:]+):\s*(.*)$/;
 
 export function readTitle(rows: Row[]): string | null {
-  return rows[1]?.text ?? null;
+  return rows[HEADING_ROWS - 1]?.text ?? null;
 }
 
 function parseFieldRow(row: Row): { label: string; raw: string } | null {
@@ -22,7 +25,7 @@ function parseFieldRow(row: Row): { label: string; raw: string } | null {
 
 export function readFields(rows: Row[], page: number): SourcedText[] {
   const fields: SourcedText[] = [];
-  for (let i = 2; i < rows.length; i++) {
+  for (let i = HEADING_ROWS; i < rows.length; i++) {
     if (matchTotalsRow(rows[i])) continue;
     const parsed = parseFieldRow(rows[i]);
     if (!parsed) continue;
@@ -88,7 +91,7 @@ function unparseableTotalFinding(id: string, found: TotalsRowMatch, why: string,
     page: evidence.page,
     lineItemId: null,
     subject: TOTAL_SUBJECT[found.kind],
-    reason: `The ${TOTAL_NOUN[found.kind]} "${found.raw}" ${why}, so we didn't use it.`,
+    reason: refusalReason(TOTAL_NOUN[found.kind], found.raw, why),
     evidence: [evidence],
     calculation: null,
   };
@@ -197,7 +200,7 @@ export function freeTextRows(rows: Row[], table: TableParse | null): Row[] {
   const start = table?.headerIndex ?? rows.length;
   const end = table?.endIndex ?? rows.length;
   return rows.filter((row, i) => {
-    if (i < 2) return false;
+    if (i < HEADING_ROWS) return false;
     if (i >= start && i < end) return false;
     return !matchTotalsRow(row);
   });

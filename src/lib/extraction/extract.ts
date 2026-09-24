@@ -9,6 +9,7 @@ import {
   mergeTotals,
   matchTotalsRow,
   noTotalsStated,
+  HEADING_ROWS,
   type StatedTotals,
 } from "./document";
 import { rules } from "./rules/index";
@@ -114,8 +115,8 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
 
     const title = readTitle(above);
     const fields = readFields(above, n);
-    // A totals row can sit above the table header too (e.g. "Total due" near the top); read it like one below so it isn't silently dropped.
-    const totalsRows = table ? [...above.slice(2), ...below] : below;
+    // "Total due" can sit above the header too, so read totals there as well.
+    const totalsRows = table ? [...above.slice(HEADING_ROWS), ...below] : [];
     const { stated, refusals: totalsRefusals } = readTotals(totalsRows, n);
     const freeText = freeTextRows(rows, table);
 

@@ -52,6 +52,11 @@ export function parseQuantity(raw: string): Parsed<number> {
   return { ok: true, value };
 }
 
+export function refusalReason(field: string, raw: string, why: string): string {
+  if (raw.trim() === "") return `The ${field} is blank, so we didn't use it.`;
+  return `The ${field} "${raw}" ${why}, so we didn't use it.`;
+}
+
 export function parsePercent(label: string): number | null {
   const match = PERCENT_PATTERN.exec(label);
   return match ? Number(match[1]) : null;

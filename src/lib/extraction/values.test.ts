@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseMoney, parseQuantity, parsePercent, formatCents, type Parsed } from "./values";
+import { parseMoney, parseQuantity, parsePercent, formatCents, refusalReason, type Parsed } from "./values";
 
-// The table and totals readers drop each why into this sentence.
 function refusalSentence(field: string, raw: string, result: Parsed<unknown>): string {
   if (result.ok) throw new Error(`expected "${raw}" to be refused`);
-  return `The ${field} "${raw}" ${result.why}, so we didn't use it.`;
+  return refusalReason(field, raw, result.why);
 }
 
 describe("parseMoney", () => {
@@ -45,6 +44,7 @@ describe("parseMoney", () => {
     ],
     ["$1.248,00", `The amount "$1.248,00" uses a comma as the decimal separator, so we didn't use it.`],
     ["TBC", `The amount "TBC" isn't a plain money amount, so we didn't use it.`],
+    ["", "The amount is blank, so we didn't use it."],
   ])("explains refusing %j in a sentence", (raw, sentence) => {
     expect(refusalSentence("amount", raw, parseMoney(raw))).toBe(sentence);
   });

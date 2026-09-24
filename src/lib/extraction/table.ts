@@ -1,6 +1,6 @@
 import type { Row } from "./rows";
 import { matchTotalsLabel, matchTotalsRow } from "./document";
-import { parseMoney, parseQuantity } from "./values";
+import { parseMoney, parseQuantity, refusalReason } from "./values";
 import type { Evidence, Finding, LineItem, SourcedMoney, SourcedNumber, SourcedText } from "./schema";
 
 export type Column = {
@@ -135,7 +135,7 @@ function valueUnparseableFinding(
     page,
     lineItemId,
     subject: `${label} for ${subjectName}`,
-    reason: `The ${label.toLowerCase()} "${raw}" ${why}, so we didn't use it.`,
+    reason: refusalReason(label.toLowerCase(), raw, why),
     evidence: [{ page, sourceText: row.text }],
     calculation: null,
   };

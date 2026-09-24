@@ -258,6 +258,11 @@ describe("readTotals", () => {
     ]);
   });
 
+  it("says a totals label with nothing after it is blank", () => {
+    const { refusals } = readTotals([row("Total:")], 1);
+    expect(refusals.map((f) => f.reason)).toEqual(["The total is blank, so we didn't use it."]);
+  });
+
   it("gives two unreadable totals on one page different ids", () => {
     const { refusals } = readTotals([row("Total: TBC"), row("Total due: TBC")], 1);
     expect(refusals.map((f) => f.id)).toEqual(["totals:total:p1:unparseable", "totals:total:p1:unparseable:2"]);
