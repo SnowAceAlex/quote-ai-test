@@ -12,7 +12,8 @@ Insta Quote AI take-home (Full Stack Engineer).
 ```bash
 pnpm install
 pnpm dev          # http://localhost:3000, with "Try a sample" buttons for the six PDFs
-pnpm test         # 202 tests
+pnpm test         # 238 unit/integration tests
+pnpm e2e          # 12 browser tests against a production build (uses installed Edge; E2E_CHANNEL=chrome to switch)
 pnpm typecheck && pnpm lint && pnpm build
 ```
 
@@ -32,6 +33,18 @@ curl -F file=@public/samples/IB-56150.pdf http://localhost:3000/api/extract
 | IB-STMT47 | 8 pages. Page 4 is a scan. Pages 5–8 aren't invoices but still list priced lines. No totals. | 21 lines from the 7 readable pages. Refuses only page 4. Warns that invoice 4 of 4 is missing and that pages 5–8 may repeat or offset invoice lines. Refuses a document total. |
 
 `tests/samples.test.ts` pins every row of this table. It also checks the evidence rule on all six files: every extracted value's `raw` text appears in its `sourceText`, and every `sourceText` is a real line on the page it names.
+
+## Testing beyond the samples
+
+- **Edge cases on generated PDFs** (`tests/edge-cases.test.ts`). `pdf-lib` builds invoices with the samples' geometry, then varies one thing at a time: header synonyms, no Code column, a discount column, credit lines, `approx 20`, European number formats, blank amounts, wrong line maths, wrong subtotal and GST, 10% GST, `Total (excl GST)`, unknown labels like `Amount due:`, conflicting box counts, tables continued across pages (with and without a repeated header), blank and scanned pages mixed in, per-invoice subtotals, rotated pages, a 60-page document. Every result also goes through the evidence check.
+- **Corruption fuzz** (`tests/corruption.test.ts`). Seeded random byte flips and truncations of the six samples. The rule: either a typed load error (`PDF_CORRUPT` / `PDF_ENCRYPTED`) or a result that passes the evidence check. A 900-mutant run produced 403 load errors, 361 fully refused, 133 partial and 3 complete, with no crash and no untraceable value. CI runs 90.
+- **API** (`route.test.ts`). Missing file, wrong form field, JSON body, empty file, over 4 MB, text posing as a PDF, corrupt PDF, password-protected PDF, a real PDF with a `.jpg` name.
+- **Browser** (`e2e/upload.spec.ts`). Clicks every sample and checks what a person sees. Forces each failure path (client-side type check, server 415, network down, Vercel's HTML 413, a malformed reply, cancel), and asserts the page never says "something went wrong".
+
+Writing these found three real bugs, now fixed:
+- a discount column made correct lines look wrong;
+- a figure labelled `Amount due:` vanished without a refusal;
+- the carton refusal repeated its source lines inside the reason.
 
 ## The contract
 
@@ -79,13 +92,14 @@ I extract them, attach a page-level warning to every one of those lines, and nev
 ## Where I'm not confident
 
 - **I've seen one supplier.** All six samples come from the same generator. Table detection relies on a header row containing `Description` and `Qty`, and on left-aligned columns. Right-aligned numbers under a narrow header can land in the wrong column. This usually fails safe (the value doesn't parse and becomes a refusal), but not always.
-- **The totals vocabulary is a whitelist.** It recognises `Subtotal`, `GST (15%)`, `Total`, `Total (incl GST)`, `Total due` and a few variants. A row like `Amount due: $500.00` or `Total GST: $75.00` is not recognised and ends up as free text: not shown, not refused.
+- **The totals vocabulary is a whitelist.** It recognises `Subtotal`, `GST (15%)`, `Total`, `Total (incl GST)`, `Total due` and a few variants. Any other `Label: $amount` row (e.g. `Amount due: $500.00`) is refused as "not recognised" rather than used. That's safe, but it means an unusual invoice layout comes back mostly refused.
+- **Discounts.** On a table with a discount column, the qty × price check is skipped entirely, because I don't know how each supplier applies the discount.
 - **The rules are narrower than their names.** The contradiction rule only looks for counts of cartons, boxes, pallets, packages, parcels and bundles. The weight rule only fires on a column labelled "Weight". Section detection relies on page titles that say "Invoice N of M".
 - **No OCR.** Scanned pages are refused. That's correct under the rules, but it means a scanned invoice returns nothing.
 - **Structural assumptions.** The first two lines of a page are assumed to be the company name and the document title. A line's evidence text is its text runs joined by single spaces. That matches the visible line, but it isn't byte-for-byte what's in the PDF content stream.
 - **A crash in a rule fails the whole request (500)** instead of being contained per rule. I chose this deliberately, because a rule that crashed must not look like a check that passed. Even so, it means one bug can hide an otherwise good result.
 - **Currency.** Values keep their `$` symbol. The service never claims NZD or AUD, even though a 15% GST suggests NZ.
-- **The UI** is covered by the client tests and a production build. It hasn't had cross-browser or accessibility testing beyond sensible defaults.
+- **The UI** is covered by the client tests and 12 Playwright tests in Edge. It hasn't been tested in Safari or Firefox, or audited for accessibility beyond sensible defaults.
 
 ## With three more days
 
