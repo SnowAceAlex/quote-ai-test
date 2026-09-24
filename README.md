@@ -1,36 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Supplier document reader
 
-## Getting Started
+Insta Quote AI take-home (Full Stack Engineer).
 
-First, run the development server:
+- **Part A:** `POST /api/extract` takes a PDF and returns JSON. The JSON lists the line items it could extract, each carrying the page and the exact source line, and a separate list of everything it refused to extract, with the reason.
+- **Part B:** a single page that uploads a file to Part A and shows the result. Refusals come first, in plain language.
+
+**Live:** _deployment URL goes here_ · Stack: Next.js 16, TypeScript, zod, `unpdf` (pdf.js), Vitest, deployed on Vercel.
+
+## Run it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm dev          # http://localhost:3000, with "Try a sample" buttons for the six PDFs
+pnpm test         # 202 tests
+pnpm typecheck && pnpm lint && pnpm build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```bash
+curl -F file=@public/samples/IB-56150.pdf http://localhost:3000/api/extract
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## What happens to the six samples
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| File | What's wrong with it | What the service does |
+|---|---|---|
+| IB-55871 | Nothing | 4 lines, subtotal, GST and total, all checked. `complete`, no refusals. |
+| IB-55902 | A scanned image with no text layer | Refuses page 1: "a scanned image with no readable text". Returns HTTP 200 with `nothing_extracted`, not an error. |
+| IB-56010 | No Amount column and no totals. Weights mix kg and g, and only one says "total". Labelled Tax Invoice but shows no GST. | Extracts quantities and unit prices, keeping the price basis (`$74.00 /carton`). Refuses line amounts, GST and total weight. It never multiplies anything out. |
+| IB-56088 | Says "9 cartons dispatched" and "11 cartons picked" | Refuses the carton count and quotes both lines. Keeps the stated `$2,050.00` total, but refuses GST because it can't tell whether the total includes GST. |
+| IB-56150 | Total (incl GST) is $1,501.80, but $1,270.00 + $190.50 = $1,460.50 | Keeps the subtotal and GST. Refuses the total and shows the calculation and all three source lines. |
+| IB-STMT47 | 8 pages. Page 4 is a scan. Pages 5–8 aren't invoices but still list priced lines. No totals. | 21 lines from the 7 readable pages. Refuses only page 4. Warns that invoice 4 of 4 is missing and that pages 5–8 may repeat or offset invoice lines. Refuses a document total. |
 
-## Learn More
+`tests/samples.test.ts` pins every row of this table. It also checks the evidence rule on all six files: every extracted value's `raw` text appears in its `sourceText`, and every `sourceText` is a real line on the page it names.
 
-To learn more about Next.js, take a look at the following resources:
+## The contract
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`src/lib/extraction/schema.ts` defines the contract as zod schemas. Both the API and the UI validate against it.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **`lineItems[]`:** each number is `{ value, raw, evidence: { page, sourceText } }`. `raw` is the text exactly as printed.
+- **`totals`:** subtotal, GST (with the rate read from its label, never hard-coded) and total. A figure that fails a check is **removed** from here and moved into `refusals`, so everything left can be used without reading the refusals first.
+- **`refusals[]`:** what wasn't extracted. Each entry has a code, a subject, a plain-English reason, the source lines and, for arithmetic, the `calculation`.
+- **`warnings[]`:** extracted, but a person should check it. Line items point to their warnings through `warningIds`.
+- **Refusals are HTTP 200.** 4xx/5xx is only for uploads that can't be processed at all: no file, empty, not a PDF, over 4 MB, password-protected, corrupt. Each has its own code and message.
 
-## Deploy on Vercel
+## How it's built
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+`src/lib/extraction/` has no framework code, so it runs in plain Node tests:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Load:** `pdf.ts` loads each page lazily.
+- **Rows:** `rows.ts` groups text items into lines.
+- **Table:** `table.ts` finds the header row (`Description` + `Qty`), maps cells to columns by x position and builds line items.
+- **Header and totals:** `document.ts` reads the title, header fields and totals rows.
+- **Rules:** `rules/` holds the checks. `arithmetic` does qty × price, lines → subtotal → GST → total. `contradictions` finds counts stated twice differently. `completeness` covers things the document never states. `sections` covers multi-invoice statements.
+- **Containment:** `extract.ts` reads each page inside its own try/catch, so a scanned or broken page becomes a page refusal and the other pages still extract.
+
+On the UI side, `src/lib/client/extract-client.ts` never throws, and turns every way a request can fail into a specific title and explanation:
+
+- the server's own error message
+- Vercel's non-JSON 413 page, rewritten as "this file is 6.2 MB, the limit is 4 MB"
+- a 504 timeout
+- a network failure
+- a reply that doesn't match the contract
+
+A test checks that none of these messages says "something went wrong".
+
+## The hardest decision
+
+**No LLM in the extraction path.** For a product called Insta Quote *AI*, the obvious move was to send the PDF to a model and ask for JSON. I didn't:
+
+- **Why:** the hard rule is that every number must point to its source. A model can paraphrase a line, normalise `$1,248.00` to `1248`, or invent a value that looks plausible, and I would then need a deterministic check that each value really appears on the page. Once that check exists, it does most of the work anyway.
+- **What I built instead:** the whole path is deterministic. Evidence is exact by construction, and the behaviour is fully testable.
+- **The cost:** it only understands layouts it has rules for. An unfamiliar layout fails closed (`NO_TABLE_FOUND`, or rows refused) rather than being guessed at. I think that's the right direction for the failure, but it means lower recall on documents I haven't seen.
+
+**Close second: warn or refuse on IB-STMT47 pages 5–8.** Their lines are stated plainly, so refusing them would throw away real data. But "Credit Note Reference" lines with positive amounts could be credits, and a "Signed Delivery Confirmation" could duplicate invoiced lines.
+
+I extract them, attach a page-level warning to every one of those lines, and never add up a statement total. If the product were pricing directly from this output, I'd lean toward refusing them instead.
+
+## Where I'm not confident
+
+- **I've seen one supplier.** All six samples come from the same generator. Table detection relies on a header row containing `Description` and `Qty`, and on left-aligned columns. Right-aligned numbers under a narrow header can land in the wrong column. This usually fails safe (the value doesn't parse and becomes a refusal), but not always.
+- **The totals vocabulary is a whitelist.** It recognises `Subtotal`, `GST (15%)`, `Total`, `Total (incl GST)`, `Total due` and a few variants. A row like `Amount due: $500.00` or `Total GST: $75.00` is not recognised and ends up as free text: not shown, not refused.
+- **The rules are narrower than their names.** The contradiction rule only looks for counts of cartons, boxes, pallets, packages, parcels and bundles. The weight rule only fires on a column labelled "Weight". Section detection relies on page titles that say "Invoice N of M".
+- **No OCR.** Scanned pages are refused. That's correct under the rules, but it means a scanned invoice returns nothing.
+- **Structural assumptions.** The first two lines of a page are assumed to be the company name and the document title. A line's evidence text is its text runs joined by single spaces. That matches the visible line, but it isn't byte-for-byte what's in the PDF content stream.
+- **A crash in a rule fails the whole request (500)** instead of being contained per rule. I chose this deliberately, because a rule that crashed must not look like a check that passed. Even so, it means one bug can hide an otherwise good result.
+- **Currency.** Values keep their `$` symbol. The service never claims NZD or AUD, even though a 15% GST suggests NZ.
+- **The UI** is covered by the client tests and a production build. It hasn't had cross-browser or accessibility testing beyond sensible defaults.
+
+## With three more days
+
+1. **Real documents from more suppliers**, turned into fixtures. Widen table detection (right-aligned columns, header synonyms, tables that continue across pages) and the totals vocabulary against what they show, rather than guessing.
+2. **Show the evidence on the page.** Render the PDF page and highlight the bounding box of the line a value came from. pdf.js already gives the coordinates. For someone checking a quote, that beats a quoted string.
+3. **OCR for scanned pages, gated.** Values would be marked `source: "ocr"`, and a row would be accepted only when its own arithmetic checks out (qty × price = amount). Everything else stays refused.
+4. **An LLM fallback for unknown layouts,** used only to propose a table mapping. Any value it returns that isn't found verbatim in that page's text is dropped into refusals.
+5. **Move closer to the team's stack:** a tRPC procedure over the same engine, and Supabase to keep uploads and results so a person can mark refusals as resolved.
+
+## How this was made
+
+- **Tools:** built with Claude Code as the coding agent. The phase plan is in `docs/plans/`. Each phase is a branch merged into `main`, so the history shows the order the work was done in.
+- **Review:** in Phase 1, each task was reviewed separately, then the whole branch was reviewed. Those reviews caught real bugs:
+  - `Total cartons: 11` was being read as a $11 total.
+  - A `GST No:` registration number was being read as a GST amount.
+  - A data row containing `2:1` could end the table and silently drop the rows after it.
+  
+  Each of these now has a regression test. After that I switched to a leaner process to fit the time budget.
