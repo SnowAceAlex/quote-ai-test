@@ -81,11 +81,26 @@ function buildCells(row: Row, columns: Column[]): string[] {
   return cells;
 }
 
-export function hasDescriptionAndQty(row: Row, columns: Column[]): boolean {
+function cellFor(cells: string[], columns: Column[], role: Column["role"]): string {
+  return cells[columns.findIndex((c) => c.role === role)] ?? "";
+}
+
+function lineCells(row: Row, columns: Column[]): { cells: string[]; description: string; qtyRaw: string } {
   const cells = buildCells(row, columns);
-  const descIdx = columns.findIndex((c) => c.role === "description");
-  const qtyIdx = columns.findIndex((c) => c.role === "qty");
-  return Boolean(cells[descIdx]) && Boolean(cells[qtyIdx]);
+  return { cells, description: cellFor(cells, columns, "description"), qtyRaw: cellFor(cells, columns, "qty") };
+}
+
+function hasDescriptionAndQty(row: Row, columns: Column[]): boolean {
+  const { description, qtyRaw } = lineCells(row, columns);
+  return Boolean(description && qtyRaw);
+}
+
+// A lump sum ("Call-out fee | $85.00") has no qty but is still money that mustn't vanish.
+export function looksLikeLineItem(row: Row, columns: Column[]): boolean {
+  const { cells, description, qtyRaw } = lineCells(row, columns);
+  if (!description) return false;
+  if (qtyRaw) return true;
+  return (["amount", "unitPrice"] as const).some((role) => parseMoney(cellFor(cells, columns, role)).ok);
 }
 
 function rowUnparseableFinding(page: number, n: number, row: Row, missingDescription: boolean, missingQty: boolean): Finding {
@@ -149,11 +164,7 @@ function parseMoneyCell(
 }
 
 function buildLineItem(row: Row, columns: Column[], page: number, n: number): { item: LineItem | null; findings: Finding[] } {
-  const cells = buildCells(row, columns);
-  const descIdx = columns.findIndex((c) => c.role === "description");
-  const qtyIdx = columns.findIndex((c) => c.role === "qty");
-  const description = cells[descIdx];
-  const qtyRaw = cells[qtyIdx];
+  const { cells, description, qtyRaw } = lineCells(row, columns);
 
   if (!description || !qtyRaw) {
     return { item: null, findings: [rowUnparseableFinding(page, n, row, !description, !qtyRaw)] };

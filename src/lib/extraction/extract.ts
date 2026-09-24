@@ -1,6 +1,6 @@
 import { loadPdf, type LoadedPage } from "./pdf";
 import { buildRows, type Row } from "./rows";
-import { hasDescriptionAndQty, parseTable, type TableParse } from "./table";
+import { looksLikeLineItem, parseTable, type TableParse } from "./table";
 import {
   readTitle,
   readFields,
@@ -48,7 +48,7 @@ function pageFinding(id: string, code: Finding["code"], page: number, reason: st
 function strandedRowFindings(rows: Row[], table: TableParse, page: number): Finding[] {
   return rows
     .slice(table.endIndex)
-    .filter((row) => !matchTotalsRow(row) && hasDescriptionAndQty(row, table.columns))
+    .filter((row) => !matchTotalsRow(row) && looksLikeLineItem(row, table.columns))
     .map((row, i) => ({
       id: `row:p${page}:after-table:${i + 1}`,
       code: "ROW_UNPARSEABLE",

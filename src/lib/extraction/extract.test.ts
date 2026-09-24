@@ -432,6 +432,42 @@ describe("readPage", () => {
     expect(result.totals.total.map((t) => t.raw)).toEqual(["$260.00"]);
   });
 
+  it("refuses a lump-sum row with no qty stranded below a sub-heading", async () => {
+    const result = await readPage(
+      pageOf([
+        ...HEADER,
+        ...dataRow("A1", "Widget", "10", "$5.00", "$50.00", 643),
+        item("Labour", 42.52, 600),
+        item("Call-out fee", 93.54, 583),
+        item("$85.00", 501.73, 583),
+        item("Total: $135.00", 337, 550),
+      ]),
+      1,
+      false,
+    );
+
+    expect(result.pageRead.table?.lineItems.map((i) => i.code)).toEqual(["A1"]);
+    expect(result.refusals.map((f) => [f.id, f.code, f.evidence])).toEqual([
+      ["row:p1:after-table:1", "ROW_UNPARSEABLE", [{ page: 1, sourceText: "Call-out fee $85.00" }]],
+    ]);
+  });
+
+  it("doesn't count a description with a non-money figure under the price columns as stranded", async () => {
+    const result = await readPage(
+      pageOf([
+        ...HEADER,
+        ...dataRow("A1", "Widget", "10", "$5.00", "$50.00", 643),
+        item("Notes", 42.52, 600),
+        item("Delivered to site", 93.54, 583),
+        item("see docket", 501.73, 583),
+      ]),
+      1,
+      false,
+    );
+
+    expect(result.refusals).toEqual([]);
+  });
+
   it("refuses a colon-less Total row under the table as an unreadable total, like its colon form", async () => {
     const result = await readPage(
       pageOf([
