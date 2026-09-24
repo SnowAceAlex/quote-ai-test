@@ -1,7 +1,7 @@
 import { loadPdf, type LoadedPage } from "./pdf";
-import { buildRows } from "./rows";
-import { parseTable } from "./table";
-import { readTitle, readFields, readTotals, freeTextRows, mergeTotals, type StatedTotals } from "./document";
+import { buildRows, type Row } from "./rows";
+import { hasDescriptionAndQty, parseTable, type TableParse } from "./table";
+import { readTitle, readFields, readTotals, freeTextRows, mergeTotals, matchTotalsRow, type StatedTotals } from "./document";
 import { rules } from "./rules/index";
 import type { PageRead, Rule, RuleContext } from "./rules/types";
 import {
@@ -36,6 +36,23 @@ function pageFinding(id: string, code: Finding["code"], page: number, reason: st
   };
 }
 
+function strandedRowFindings(rows: Row[], table: TableParse, page: number): Finding[] {
+  return rows
+    .slice(table.endIndex)
+    .filter((row) => !matchTotalsRow(row) && hasDescriptionAndQty(row, table.columns))
+    .map((row, i) => ({
+      id: `row:p${page}:after-table:${i + 1}`,
+      code: "ROW_UNPARSEABLE",
+      scope: "line",
+      page,
+      lineItemId: null,
+      subject: `Row on page ${page}`,
+      reason: "This row looks like a line item but sits outside the table we found, so we didn't use it.",
+      evidence: [{ page, sourceText: row.text }],
+      calculation: null,
+    }));
+}
+
 // Per-page reader: never throws - a page's own errors become a refusal instead.
 export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): Promise<PageReadResult> {
   const suffix = multiPage ? " The other pages were read normally." : "";
@@ -68,7 +85,7 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
     const freeText = freeTextRows(rows, table);
 
     const tableRefusals = table
-      ? table.rowFindings
+      ? [...table.rowFindings, ...strandedRowFindings(rows, table, n)]
       : [
           pageFinding(
             `page:${n}:no-table`,

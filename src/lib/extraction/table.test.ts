@@ -203,6 +203,148 @@ describe("parseTable on synthetic rows", () => {
     expect(finding.reason).toBe("This row has no quantity, so we didn't treat it as a line item.");
   });
 
+  it("a colon inside a coded row's description doesn't end the table", () => {
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      dataRow("AB12", "Mix ratio 2:1 epoxy", "3", "ea", "$5.00", "$15.00", 643.31),
+      dataRow("A3", "Widget C", "30", "ea", "$5.00", "$150.00", 626.3),
+      [item("Total: $215.00", 337.3, 590)],
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.code)).toEqual(["A1", "AB12", "A3"]);
+    expect(table?.lineItems[1].description).toBe("Mix ratio 2:1 epoxy");
+    expect(table?.endIndex).toBe(rows.length - 1);
+    expect(table?.rowFindings).toEqual([]);
+  });
+
+  it("a time in an uncoded row's description doesn't end the table", () => {
+    const y = 643.31;
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      [item("Delivery 10:30 slot", 93.54, y), item("1", 325.98, y), item("$40.00", 501.73, y)],
+      dataRow("A3", "Widget C", "30", "ea", "$5.00", "$150.00", 626.3),
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.description)).toEqual(["Widget A", "Delivery 10:30 slot", "Widget C"]);
+    expect(table?.lineItems[1].code).toBeNull();
+    expect(table?.lineItems[1].amount?.raw).toBe("$40.00");
+  });
+
+  it("a line item after a wider gap still belongs to the table", () => {
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      dataRow("A2", "Widget B", "10", "ea", "$5.00", "$50.00", 643.31),
+      dataRow("L1", "Install", "2", "hr", "$80.00", "$160.00", 570),
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.code)).toEqual(["A1", "A2", "L1"]);
+  });
+
+  it("a sub-heading after a gap ends the table there", () => {
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      dataRow("A2", "Widget B", "10", "ea", "$5.00", "$50.00", 643.31),
+      [item("Labour", 42.52, 570)],
+      dataRow("L1", "Install", "2", "hr", "$80.00", "$160.00", 553),
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.code)).toEqual(["A1", "A2"]);
+    expect(rows[table?.endIndex ?? -1]?.text).toBe("Labour");
+  });
+
+  it("a totals row ends the table even when its cells sit under Description and Qty", () => {
+    const y = 643.31;
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      [item("Total:", 93.54, y), item("10", 325.98, y), item("$50.00", 501.73, y)],
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.code)).toEqual(["A1"]);
+    expect(table?.endIndex).toBe(rows.length - 1);
+    expect(table?.rowFindings).toEqual([]);
+  });
+
+  it("a Sub-total row right under the table ends it", () => {
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      [item("Sub-total:", 337.3, 643.31), item("$50.00", 501.73, 643.31)],
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.endIndex).toBe(rows.length - 1);
+    expect(table?.rowFindings).toEqual([]);
+  });
+
+  it("a table can run to the bottom of the page", () => {
+    const rows = rowsFrom([
+      HEADER,
+      RULE,
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      dataRow("A2", "Widget B", "20", "ea", "$5.00", "$100.00", 643.31),
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems).toHaveLength(2);
+    expect(table?.endIndex).toBe(rows.length);
+    expect(table?.rowFindings).toEqual([]);
+  });
+
+  it.each(["_".repeat(100), "=".repeat(100)])("skips a %s rule row", (rule) => {
+    const rows = rowsFrom([
+      HEADER,
+      [item(rule, 42.52, 677.32)],
+      dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32),
+      dataRow("A2", "Widget B", "20", "ea", "$5.00", "$100.00", 643.31),
+      [item(rule, 42.52, 630)],
+    ]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.lineItems.map((i) => i.id)).toEqual(["p1-l1", "p1-l2"]);
+    expect(table?.rowFindings).toEqual([]);
+  });
+
+  it("maps Qty. and Amount (excl GST) headers to qty and amount, keeping the labels as printed", () => {
+    const header = [
+      item("Code", 42.52, 700),
+      item("Description", 93.54, 700),
+      item("Qty.", 325.98, 700),
+      item("Unit", 377.01, 700),
+      item("Unit Price", 428.03, 700),
+      item("Amount (excl GST)", 501.73, 700),
+    ];
+    const rows = rowsFrom([header, RULE, dataRow("A1", "Widget A", "10", "ea", "$5.00", "$50.00", 660.32)]);
+
+    const table = parseTable(rows, 1);
+    expect(table?.columns.map((c) => [c.label, c.role])).toEqual([
+      ["Code", "code"],
+      ["Description", "description"],
+      ["Qty.", "qty"],
+      ["Unit", "unit"],
+      ["Unit Price", "unitPrice"],
+      ["Amount (excl GST)", "amount"],
+    ]);
+    expect(table?.lineItems[0].quantity?.value).toBe(10);
+    expect(table?.lineItems[0].amount?.raw).toBe("$50.00");
+    expect(table?.lineItems[0].otherColumns).toEqual([]);
+  });
+
   it("returns null when no row has both Description and Qty headers", () => {
     const rows = rowsFrom([
       [item("Notes", 42.52, 700)],

@@ -1,4 +1,5 @@
 import type { Row } from "./rows";
+import { matchTotalsRow } from "./document";
 import { parseMoney, parseQuantity } from "./values";
 import type { Evidence, Finding, LineItem, SourcedMoney, SourcedNumber, SourcedText } from "./schema";
 
@@ -17,7 +18,7 @@ export type TableParse = {
   endIndex: number;
 };
 
-const DASHED_ROW = /^-+$/;
+const DASHED_ROW = /^[-_=]+$/;
 // A footer label line: "Subtotal:", "GST (15%):", "Warehouse notes: ..."
 const LABEL_ROW = /^[A-Za-z][A-Za-z0-9 ()%]*:/;
 
@@ -40,12 +41,13 @@ const FIELD_LABELS = { quantity: "Quantity", unitPrice: "Unit price", amount: "A
 type MoneyField = "unitPrice" | "amount";
 
 function roleForLabel(label: string): Column["role"] {
-  return ROLE_BY_LABEL[label.trim().toLowerCase()] ?? "other";
+  const normalised = label.trim().replace(/\.$/, "").replace(/\s*\([^)]*\)$/, "").toLowerCase();
+  return ROLE_BY_LABEL[normalised] ?? "other";
 }
 
 function isHeaderRow(row: Row): boolean {
-  const texts = row.items.map((item) => item.str.trim().toLowerCase());
-  return texts.includes("description") && (texts.includes("qty") || texts.includes("quantity"));
+  const roles = row.items.map((item) => roleForLabel(item.str));
+  return roles.includes("description") && roles.includes("qty");
 }
 
 function buildColumns(header: Row): Column[] {
@@ -77,6 +79,13 @@ function buildCells(row: Row, columns: Column[]): string[] {
     cells[idx] = cells[idx] === "" ? text : `${cells[idx]} ${text}`;
   }
   return cells;
+}
+
+export function hasDescriptionAndQty(row: Row, columns: Column[]): boolean {
+  const cells = buildCells(row, columns);
+  const descIdx = columns.findIndex((c) => c.role === "description");
+  const qtyIdx = columns.findIndex((c) => c.role === "qty");
+  return Boolean(cells[descIdx]) && Boolean(cells[qtyIdx]);
 }
 
 function rowUnparseableFinding(page: number, n: number, row: Row, missingDescription: boolean, missingQty: boolean): Finding {
@@ -217,11 +226,10 @@ export function parseTable(rows: Row[], page: number): TableParse | null {
 
   for (const idx of dataRowIndices) {
     const row = rows[idx];
-    if (LABEL_ROW.test(row.text)) {
-      endIndex = idx;
-      break;
-    }
-    if (prevY !== null && prevY - row.y > 1.5 * baseline) {
+    const labelled = LABEL_ROW.test(row.items[0].str.trim());
+    const farBelow = prevY !== null && prevY - row.y > 1.5 * baseline;
+    // A colon or a gap can't end the table on a row that reads as a line item, or that row would vanish.
+    if (matchTotalsRow(row) || ((labelled || farBelow) && !hasDescriptionAndQty(row, columns))) {
       endIndex = idx;
       break;
     }

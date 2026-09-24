@@ -84,6 +84,11 @@ describe("extractDocument on samples", () => {
       const result = await extractDocument(loadSample(name), name);
       expect(() => ExtractionResult.parse(result)).not.toThrow();
     });
+
+    it(`${name}: no row is refused as unreadable or stranded`, async () => {
+      const result = await extractDocument(loadSample(name), name);
+      expect(result.refusals.filter((f) => f.code === "ROW_UNPARSEABLE")).toEqual([]);
+    });
   }
 
   it("propagates PdfLoadError for a corrupt file instead of returning a refusal", async () => {
@@ -299,5 +304,53 @@ describe("readPage", () => {
     expect(result.pageRead.table?.lineItems).toHaveLength(1);
     expect(result.totals.total).toEqual([]);
     expect(result.refusals.map((f) => f.id)).toEqual(["totals:total:p1:unparseable"]);
+  });
+
+  it("refuses a line-item row stranded below a sub-heading instead of dropping it", async () => {
+    const result = await readPage(
+      pageOf([
+        ...HEADER,
+        ...dataRow("A1", "Widget A", "10", "$5.00", "$50.00", 643),
+        ...dataRow("A2", "Widget B", "10", "$5.00", "$50.00", 626),
+        item("Labour", 42.52, 590),
+        ...dataRow("L1", "Install", "2", "$80.00", "$160.00", 573),
+        item("Total: $260.00", 337, 540),
+      ]),
+      1,
+      false,
+    );
+
+    expect(result.pageRead.table?.lineItems.map((i) => i.code)).toEqual(["A1", "A2"]);
+    expect(result.refusals).toEqual([
+      {
+        id: "row:p1:after-table:1",
+        code: "ROW_UNPARSEABLE",
+        scope: "line",
+        page: 1,
+        lineItemId: null,
+        subject: "Row on page 1",
+        reason: "This row looks like a line item but sits outside the table we found, so we didn't use it.",
+        evidence: [{ page: 1, sourceText: "L1 Install 2 ea $80.00 $160.00" }],
+        calculation: null,
+      },
+    ]);
+    expect(result.totals.total.map((t) => t.raw)).toEqual(["$260.00"]);
+  });
+
+  it("doesn't count a totals row laid out across the columns as a stranded line item", async () => {
+    const result = await readPage(
+      pageOf([
+        ...HEADER,
+        ...dataRow("A1", "Widget A", "10", "$5.00", "$50.00", 643),
+        item("Subtotal: $50.00", 337, 600),
+        item("Total (incl GST):", 93.54, 583),
+        item("$57.50", 325.98, 583),
+      ]),
+      1,
+      false,
+    );
+
+    expect(result.refusals).toEqual([]);
+    expect(result.totals.total.map((t) => t.raw)).toEqual(["$57.50"]);
   });
 });
