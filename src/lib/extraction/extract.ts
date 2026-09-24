@@ -3,7 +3,7 @@ import { buildRows, type Row } from "./rows";
 import { hasDescriptionAndQty, parseTable, type TableParse } from "./table";
 import { readTitle, readFields, readTotals, freeTextRows, mergeTotals, matchTotalsRow, type StatedTotals } from "./document";
 import { rules } from "./rules/index";
-import type { PageRead, Rule, RuleContext } from "./rules/types";
+import type { LineWarning, PageRead, Rule, RuleContext } from "./rules/types";
 import {
   ExtractionResult,
   type Finding,
@@ -144,16 +144,24 @@ function dedupeFields(fields: SourcedText[]): SourcedText[] {
 function applyRules(
   ruleList: Rule[],
   ctx: RuleContext,
-): { lineItems: LineItem[]; totals: Totals; refusals: Finding[]; warnings: Finding[] } {
+): {
+  lineItems: LineItem[];
+  totals: Totals;
+  refusals: Finding[];
+  warnings: Finding[];
+  lineWarnings: LineWarning[];
+} {
   let lineItems = ctx.lineItems;
   let totals = ctx.totals;
   const refusals: Finding[] = [];
   const warnings: Finding[] = [];
+  const lineWarnings: LineWarning[] = [];
 
   for (const rule of ruleList) {
     const result = rule(ctx);
     refusals.push(...result.refusals);
     warnings.push(...result.warnings);
+    lineWarnings.push(...(result.lineWarnings ?? []));
 
     if (result.refuseTotals?.length) {
       const next = { ...totals };
@@ -180,7 +188,23 @@ function applyRules(
     }
   }
 
-  return { lineItems, totals, refusals, warnings };
+  return { lineItems, totals, refusals, warnings, lineWarnings };
+}
+
+// Ids are how the UI links a line to its warnings, so a clash is a bug to surface, not a result to return.
+function checkFindingIds(findings: Finding[], warnings: Finding[], lineWarnings: LineWarning[]): void {
+  const seen = new Set<string>();
+  for (const finding of findings) {
+    if (seen.has(finding.id)) throw new Error(`Two findings share the id "${finding.id}".`);
+    seen.add(finding.id);
+  }
+
+  const warningIds = new Set(warnings.map((w) => w.id));
+  for (const { lineItemId, warningId } of lineWarnings) {
+    if (!warningIds.has(warningId)) {
+      throw new Error(`Line ${lineItemId} points at warning "${warningId}", which doesn't exist.`);
+    }
+  }
 }
 
 export async function extractDocument(
@@ -218,9 +242,10 @@ export async function extractDocument(
   const { totals: mergedTotals, refusals: totalsRefusals } = mergeTotals(perPageTotals);
   refusals.push(...totalsRefusals);
 
-  const ctx: RuleContext = { pages: pageReads, lineItems, totals: mergedTotals, fields };
+  const ctx: RuleContext = { pages: pageReads, lineItems, totals: mergedTotals, fields, refusals: [...refusals] };
   const applied = applyRules(ruleList, ctx);
   refusals.push(...applied.refusals);
+  checkFindingIds([...refusals, ...applied.warnings], applied.warnings, applied.lineWarnings);
 
   const outcome: ExtractionResult["outcome"] =
     applied.lineItems.length === 0 ? "nothing_extracted" : refusals.length === 0 ? "complete" : "partial";

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { extractDocument, readPage } from "./extract";
 import { PdfLoadError, type LoadedPage, type TextItem, loadPdf } from "./pdf";
-import { ExtractionResult } from "./schema";
+import { ExtractionResult, type Finding } from "./schema";
 import type { Rule } from "./rules/types";
 import { loadSample } from "./test-helpers";
 import { buildRows } from "./rows";
@@ -175,6 +175,62 @@ describe("extractDocument with an injected fake rule", () => {
 
     expect(result.outcome).toBe("complete");
     expect(result.warnings).toContainEqual(expect.objectContaining({ id: "test:warning-only" }));
+  });
+
+  function fakeFinding(id: string): Finding {
+    return {
+      id,
+      code: "AMBIGUOUS",
+      scope: "document",
+      page: null,
+      lineItemId: null,
+      subject: "Fake",
+      reason: "A fake finding for testing.",
+      evidence: [],
+      calculation: null,
+    };
+  }
+
+  it("hands rules the refusals found before they ran", async () => {
+    const seen: string[][] = [];
+    const spyRule: Rule = (ctx) => {
+      seen.push(ctx.refusals.map((f) => f.id));
+      return { refusals: [], warnings: [] };
+    };
+
+    await extractDocument(loadSample("IB-55902.pdf"), "IB-55902.pdf", [spyRule]);
+    expect(seen).toEqual([["page:1:no-text"]]);
+  });
+
+  it("every rule sees the same snapshot, not an earlier rule's refusals", async () => {
+    const seen: string[][] = [];
+    const firstRule: Rule = () => ({ refusals: [fakeFinding("fake:first")], warnings: [] });
+    const spyRule: Rule = (ctx) => {
+      seen.push(ctx.refusals.map((f) => f.id));
+      return { refusals: [], warnings: [] };
+    };
+
+    const result = await extractDocument(loadSample("IB-55902.pdf"), "IB-55902.pdf", [firstRule, spyRule]);
+    expect(seen).toEqual([["page:1:no-text"]]);
+    expect(result.refusals.map((f) => f.id)).toEqual(["page:1:no-text", "fake:first"]);
+  });
+
+  it("throws when a rule reuses an id another finding already has", async () => {
+    const clashingRule: Rule = () => ({ refusals: [], warnings: [fakeFinding("page:1:no-text")] });
+    await expect(extractDocument(loadSample("IB-55902.pdf"), "IB-55902.pdf", [clashingRule])).rejects.toThrow(
+      'Two findings share the id "page:1:no-text".',
+    );
+  });
+
+  it("throws when a line warning points at a warning that doesn't exist", async () => {
+    const danglingRule: Rule = () => ({
+      refusals: [],
+      warnings: [],
+      lineWarnings: [{ lineItemId: "p1-l1", warningId: "fake:missing" }],
+    });
+    await expect(extractDocument(loadSample("IB-55871.pdf"), "IB-55871.pdf", [danglingRule])).rejects.toThrow(
+      'Line p1-l1 points at warning "fake:missing", which doesn\'t exist.',
+    );
   });
 });
 
