@@ -285,9 +285,14 @@ Rules:
 - Roles from header labels: Code, Description, Qty/Quantity, Unit, Unit Price/Price, Amount/Total/Line Total.
   Anything else (Weight) → `other`, carried in `otherColumns` as raw text only.
 - A cell belongs to the column with the greatest `x` ≤ `item.x + 2`.
-- Skip the dashed rule row. Table ends at the first row that has no Qty cell or whose first cell ends
-  in `:` (Subtotal:, Total:).
-- A row missing description or qty → `ROW_UNPARSEABLE` finding quoting the row; other rows continue.
+- Skip the dashed rule row (`/^-+$/`).
+- Table ends at the first row that either starts with a label ending in `:` (Subtotal:, Total:,
+  Warehouse notes:) or sits more than 1.5× the header-to-first-row gap below the previous table row
+  (samples: rows 17pt apart, footers 35–40pt below). Footers therefore never become table rows.
+- Inside the table, a row missing description or qty → `ROW_UNPARSEABLE` finding quoting the row;
+  other rows continue.
+- Line item ids are `p<page>-l<n>` (n is 1-based per page). Finding ids are
+  `<kind>:<suffix>` strings unique per document, e.g. `row:p1-l3:qty`.
 - A money/qty cell that fails the strict parser → field set to `null` + `VALUE_UNPARSEABLE` finding.
 - Every sourced field gets `evidence = { page, sourceText: row.text }`.
 
@@ -309,15 +314,38 @@ Tests:
 ```ts
 readTitle(rows: Row[]): string | null;          // row directly under the company name
 readFields(rows: Row[], page: number): SourcedText[]; // "Label: value" rows above the table
-readTotals(rows: Row[], page: number): { subtotal?, gst?, total? }; // label ending ":" + money
-freeTextRows(rows: Row[], table: TableParse | null): Row[]; // everything not header/table/totals
+readTotals(rows: Row[], page: number): Totals;  // "<label>: <money>" rows below the table
+freeTextRows(rows: Row[], table: TableParse | null): Row[]; // every row not title/header/table/totals
 extractDocument(bytes: Uint8Array, fileName: string): Promise<ExtractionResult>;
+
+// src/lib/extraction/rules/types.ts – phase 2 rules plug in here
+type PageRead = { page: number; status: "read" | "refused"; title: string | null; rows: Row[]; table: TableParse | null; freeText: Row[] };
+type RuleContext = { pages: PageRead[]; lineItems: LineItem[]; totals: Totals; fields: SourcedText[] };
+type RuleResult = {
+  refusals: Finding[];
+  warnings: Finding[];
+  refuseTotals?: Array<"subtotal" | "gst" | "total">; // set to null in the output
+  refuseAmounts?: string[];                            // line item ids whose amount becomes null
+  lineWarnings?: Array<{ lineItemId: string; warningId: string }>;
+};
+type Rule = (ctx: RuleContext) => RuleResult;
+// src/lib/extraction/rules/index.ts
+export const rules: Rule[] = []; // phase 2 appends here
 ```
+
+Field rows: a row matching `Label: value` above the table where the label is at most 3 words and
+the value does not end with `.` – so "Document No: IB-56010" is a field, while "Summary: 9 cartons
+dispatched from Ironbark warehouse this run." stays free text for the contradiction rule.
+
+Totals rows: `row.text` matches `^(.+?):\s*(\S+)$` below the table and the value parses as money.
+Label containing `GST` → `gst` (rate via `parsePercent`); label starting `Subtotal` → `subtotal`;
+label starting `Total` → `total`, `includesGst` true if the label says `incl GST`, false if
+`excl GST`, else null.
 
 `extractDocument` loops pages with a `try/catch` per page: no items → `NO_TEXT_LAYER` refusal
 (scope page), thrown error → `PAGE_UNREADABLE` refusal, no table → `NO_TABLE_FOUND`. Then runs
-the phase 2 rules (stubbed as an empty list here) and computes `outcome`. Validates its own output
-with `ExtractionResult.parse` before returning.
+every rule in `rules`, applies their removals, attaches line warnings, and computes `outcome`.
+Validates its own output with `ExtractionResult.parse` before returning.
 
 Tests:
 - IB-55871 → outcome `complete`, fields include `Document No` = `IB-55871`, totals
@@ -332,9 +360,10 @@ Tests:
 
 ## Phase 2 – Refusal rules · branch `feat/phase-2-refusal-rules` (~1.5 h)
 
-Each rule is a pure function `(ctx: RuleContext) => { refusals: Finding[]; warnings: Finding[]; remove?: ... }`
-where `RuleContext` holds pages, rows, line items, totals and free-text rows. `extract.ts` applies
-the returned removals (e.g. `totals.total = null`) after all rules run.
+Each rule is a `Rule` from `src/lib/extraction/rules/types.ts` (defined in Task 1.5): a pure
+function of `RuleContext` returning a `RuleResult`. Register it in `rules/index.ts`; `extract.ts`
+already applies `refuseTotals`, `refuseAmounts` and `lineWarnings`. Rule tests build a
+`RuleContext` directly (or run `extractDocument` on a sample) – no PDF mocking.
 
 ### Task 2.1: Arithmetic checks
 
