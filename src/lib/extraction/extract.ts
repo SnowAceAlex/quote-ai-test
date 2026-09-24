@@ -1,16 +1,14 @@
 import { loadPdf, type LoadedPage } from "./pdf";
 import { buildRows } from "./rows";
 import { parseTable } from "./table";
-import { readTitle, readFields, readTotals, freeTextRows, type TotalKind } from "./document";
+import { readTitle, readFields, readTotals, freeTextRows, mergeTotals, type StatedTotals } from "./document";
 import { rules } from "./rules/index";
 import type { PageRead, Rule, RuleContext } from "./rules/types";
 import {
   ExtractionResult,
-  type Evidence,
   type Finding,
   type LineItem,
   type PageSummary,
-  type SourcedMoney,
   type SourcedText,
   type Totals,
 } from "./schema";
@@ -21,7 +19,7 @@ type PageReadResult = {
   pageRead: PageRead;
   refusals: Finding[];
   fields: SourcedText[];
-  totals: Totals;
+  totals: StatedTotals;
 };
 
 function pageFinding(id: string, code: Finding["code"], page: number, reason: string): Finding {
@@ -42,7 +40,7 @@ function pageFinding(id: string, code: Finding["code"], page: number, reason: st
 export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): Promise<PageReadResult> {
   const suffix = multiPage ? " The other pages were read normally." : "";
   const emptyPageRead: PageRead = { page: n, status: "refused", title: null, rows: [], table: null, freeText: [] };
-  const emptyTotals: Totals = { subtotal: null, gst: null, total: null };
+  const emptyTotals: StatedTotals = { subtotal: [], gst: [], total: [] };
 
   try {
     const loaded = await pdf.getPage(n);
@@ -66,11 +64,11 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
 
     const title = readTitle(above);
     const fields = readFields(above, n);
-    const totals = readTotals(below, n);
+    const { stated, refusals: totalsRefusals } = readTotals(below, n);
     const freeText = freeTextRows(rows, table);
 
-    const refusals = table
-      ? [...table.rowFindings]
+    const tableRefusals = table
+      ? table.rowFindings
       : [
           pageFinding(
             `page:${n}:no-table`,
@@ -82,9 +80,9 @@ export async function readPage(pdf: PdfSource, n: number, multiPage: boolean): P
 
     return {
       pageRead: { page: n, status: "read", title, rows, table, freeText },
-      refusals,
+      refusals: [...tableRefusals, ...totalsRefusals],
       fields,
-      totals,
+      totals: stated,
     };
   } catch {
     // Don't leak the underlying exception's message into a user-facing reason.
@@ -108,60 +106,6 @@ function dedupeFields(fields: SourcedText[]): SourcedText[] {
     result.push(field);
   }
   return result;
-}
-
-const TOTAL_SUBJECT: Record<TotalKind, string> = { subtotal: "Subtotal", gst: "GST", total: "Total" };
-
-function englishList(parts: string[]): string {
-  if (parts.length === 1) return parts[0];
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
-}
-
-function conflictFinding(kind: TotalKind, values: Array<{ raw: string; evidence: Evidence }>): Finding {
-  const subject = TOTAL_SUBJECT[kind];
-  const parts = values.map((v) => `${v.raw} on page ${v.evidence.page}`);
-  return {
-    id: `totals:${kind}:conflict`,
-    code: "CONTRADICTION",
-    scope: "document",
-    page: null,
-    lineItemId: null,
-    subject,
-    reason: `${subject} is stated as ${englishList(parts)}, so we can't tell which is right.`,
-    evidence: values.map((v) => v.evidence),
-    calculation: null,
-  };
-}
-
-// First-page-wins when every page agrees; otherwise refuse rather than guess which value is right.
-function resolveKind<T extends { raw: string; evidence: Evidence }>(
-  kind: TotalKind,
-  values: T[],
-): { value: T | null; refusal: Finding | null } {
-  if (values.length === 0) return { value: null, refusal: null };
-  if (new Set(values.map((v) => v.raw)).size === 1) return { value: values[0], refusal: null };
-  return { value: null, refusal: conflictFinding(kind, values) };
-}
-
-// The totals merger: combines each page's Totals into one, refusing (never guessing) on conflict.
-export function mergeTotals(perPage: Array<{ page: number; totals: Totals }>): { totals: Totals; refusals: Finding[] } {
-  const subtotals = perPage.map((p) => p.totals.subtotal).filter((v): v is SourcedMoney => v !== null);
-  const gsts = perPage.map((p) => p.totals.gst).filter((v): v is NonNullable<Totals["gst"]> => v !== null);
-  const totalsList = perPage.map((p) => p.totals.total).filter((v): v is NonNullable<Totals["total"]> => v !== null);
-
-  const subtotalResult = resolveKind("subtotal", subtotals);
-  const gstResult = resolveKind("gst", gsts);
-  const totalResult = resolveKind("total", totalsList);
-
-  const refusals = [subtotalResult.refusal, gstResult.refusal, totalResult.refusal].filter(
-    (f): f is Finding => f !== null,
-  );
-
-  return {
-    totals: { subtotal: subtotalResult.value, gst: gstResult.value, total: totalResult.value },
-    refusals,
-  };
 }
 
 // A rule that throws is not caught here - a rule crash must surface, not look like a clean pass.
@@ -219,7 +163,7 @@ export async function extractDocument(
   const pageReads: PageRead[] = [];
   const lineItems: LineItem[] = [];
   const allFields: SourcedText[] = [];
-  const perPageTotals: Array<{ page: number; totals: Totals }> = [];
+  const perPageTotals: StatedTotals[] = [];
   const refusals: Finding[] = [];
 
   for (let n = 1; n <= pdf.pageCount; n++) {
@@ -234,7 +178,7 @@ export async function extractDocument(
     });
     if (pageRead.table) lineItems.push(...pageRead.table.lineItems);
     allFields.push(...fields);
-    perPageTotals.push({ page: n, totals });
+    perPageTotals.push(totals);
     refusals.push(...pageRefusals);
   }
 

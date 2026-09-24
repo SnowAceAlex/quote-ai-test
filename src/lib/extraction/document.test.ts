@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readTitle, readFields, readTotals, freeTextRows } from "./document";
+import { readTitle, readFields, readTotals, freeTextRows, matchTotalsRow, mergeTotals, type StatedTotals } from "./document";
 import type { Row } from "./rows";
 import type { TableParse } from "./table";
+import type { SourcedMoney } from "./schema";
 
 function row(text: string): Row {
   return { y: 0, items: [], text };
@@ -56,57 +57,277 @@ describe("readFields", () => {
     const rows = [row("Company"), row("Title"), row("Payment due 20 days from invoice date.")];
     expect(readFields(rows, 1)).toEqual([]);
   });
+
+  it("skips totals rows, which reach it when the page has no table", () => {
+    const rows = [
+      row("Acme Supplies"),
+      row("Tax Invoice"),
+      row("Invoice No: A-1"),
+      row("Subtotal: $1,270.00"),
+      row("GST (15%): $190.50"),
+      row("Total (incl GST): $1,501.80"),
+      row("Total: TBC"),
+    ];
+    expect(readFields(rows, 1).map((f) => f.label)).toEqual(["Invoice No"]);
+  });
+});
+
+describe("matchTotalsRow", () => {
+  it.each([
+    ["Subtotal: $1.00", "subtotal"],
+    ["Sub-total: $1.00", "subtotal"],
+    ["SUBTOTAL: $1.00", "subtotal"],
+    ["Total (excl GST): $1.00", "subtotal"],
+    ["Total excl. GST: $1.00", "subtotal"],
+    ["GST: $1.00", "gst"],
+    ["GST (15%): $1.00", "gst"],
+    ["GST (12.5%): $1.00", "gst"],
+    ["GST 15%: $1.00", "gst"],
+    ["Total: $1.00", "total"],
+    ["Grand total: $1.00", "total"],
+    ["Total (incl GST): $1.00", "total"],
+    ["Total incl. GST: $1.00", "total"],
+    ["Total due: $1.00", "total"],
+    ["TOTAL PAYABLE: $1.00", "total"],
+  ])("reads %j as a %s row", (text, kind) => {
+    expect(matchTotalsRow(row(text))?.kind).toBe(kind);
+  });
+
+  it.each([
+    "Total cartons: 11",
+    "GST No: 111222333",
+    "Total consignment weight: see individual lines.",
+    "Warehouse notes: 11 cartons picked and loaded onto the truck.",
+    "Payment due 20 days from invoice date.",
+    "Subtotals: $1.00",
+  ])("leaves %j alone", (text) => {
+    expect(matchTotalsRow(row(text))).toBeNull();
+  });
+
+  it("splits the label from the value at the colon", () => {
+    expect(matchTotalsRow(row("Total (incl GST): $3,747.85"))).toEqual({
+      kind: "total",
+      label: "Total (incl GST)",
+      raw: "$3,747.85",
+    });
+  });
 });
 
 describe("readTotals", () => {
   it("reads Subtotal/GST/Total rows, deriving GST rate and includesGst true", () => {
     const rows = [row("Subtotal: $3,259.00"), row("GST (15%): $488.85"), row("Total (incl GST): $3,747.85")];
-    const totals = readTotals(rows, 1);
+    const { stated, refusals } = readTotals(rows, 1);
 
-    expect(totals.subtotal).toEqual({
-      value: 3259,
-      raw: "$3,259.00",
-      per: null,
-      evidence: { page: 1, sourceText: "Subtotal: $3,259.00" },
-    });
-    expect(totals.gst).toEqual({
-      value: 488.85,
-      raw: "$488.85",
-      per: null,
-      ratePercent: 15,
-      evidence: { page: 1, sourceText: "GST (15%): $488.85" },
-    });
-    expect(totals.total).toEqual({
-      value: 3747.85,
-      raw: "$3,747.85",
-      per: null,
-      includesGst: true,
-      evidence: { page: 1, sourceText: "Total (incl GST): $3,747.85" },
-    });
+    expect(stated.subtotal).toEqual([
+      { value: 3259, raw: "$3,259.00", per: null, evidence: { page: 1, sourceText: "Subtotal: $3,259.00" } },
+    ]);
+    expect(stated.gst).toEqual([
+      {
+        value: 488.85,
+        raw: "$488.85",
+        per: null,
+        ratePercent: 15,
+        evidence: { page: 1, sourceText: "GST (15%): $488.85" },
+      },
+    ]);
+    expect(stated.total).toEqual([
+      {
+        value: 3747.85,
+        raw: "$3,747.85",
+        per: null,
+        includesGst: true,
+        evidence: { page: 1, sourceText: "Total (incl GST): $3,747.85" },
+      },
+    ]);
+    expect(refusals).toEqual([]);
   });
 
-  it("sets includesGst false for a label that says excl GST", () => {
-    const totals = readTotals([row("Total (excl GST): $1,270.00")], 1);
-    expect(totals.total?.includesGst).toBe(false);
+  it("reads a pre-GST total as the subtotal, keeping its own label in the evidence", () => {
+    const { stated } = readTotals([row("Total (excl GST): $1,270.00")], 1);
+    expect(stated.subtotal).toEqual([
+      { value: 1270, raw: "$1,270.00", per: null, evidence: { page: 1, sourceText: "Total (excl GST): $1,270.00" } },
+    ]);
+    expect(stated.total).toEqual([]);
   });
 
-  it("a Total line with no incl/excl wording leaves includesGst null and is not mistaken for the GST line", () => {
-    const totals = readTotals([row("Total: $2,050.00")], 1);
-    expect(totals.total?.includesGst).toBeNull();
-    expect(totals.gst).toBeNull();
+  it("reads the rate from a GST 15% label", () => {
+    const { stated } = readTotals([row("GST 15%: $190.50")], 1);
+    expect(stated.gst[0]?.ratePercent).toBe(15);
   });
 
-  it("ignores rows whose value after the colon has more than one token, even if it starts with a number", () => {
+  it("a Total line with no incl wording leaves includesGst null and is not mistaken for the GST line", () => {
+    const { stated } = readTotals([row("Total: $2,050.00"), row("Total due: $2,050.00")], 1);
+    expect(stated.total.map((t) => t.includesGst)).toEqual([null, null]);
+    expect(stated.gst).toEqual([]);
+  });
+
+  it("leaves Total cartons and GST No alone instead of reading them as money", () => {
+    const rows = [row("Total cartons: 11"), row("Total: $2,050.00"), row("GST No: 111222333")];
+    const { stated, refusals } = readTotals(rows, 1);
+    expect(stated.subtotal).toEqual([]);
+    expect(stated.gst).toEqual([]);
+    expect(stated.total.map((t) => t.raw)).toEqual(["$2,050.00"]);
+    expect(refusals).toEqual([]);
+  });
+
+  it("ignores free-text rows with colons", () => {
     const rows = [
       row("Warehouse notes: 11 cartons picked and loaded onto the truck."),
       row("Payment due 20 days from invoice date."),
     ];
-    expect(readTotals(rows, 1)).toEqual({ subtotal: null, gst: null, total: null });
+    expect(readTotals(rows, 1)).toEqual({ stated: { subtotal: [], gst: [], total: [] }, refusals: [] });
   });
 
-  it("leaves a kind null when its value doesn't parse as money", () => {
-    const totals = readTotals([row("Total: see attached schedule")], 1);
+  it("returns every statement of a kind, not just the first", () => {
+    const { stated } = readTotals([row("Total: $2,050.00"), row("Total due: $2,100.00")], 1);
+    expect(stated.total.map((t) => t.raw)).toEqual(["$2,050.00", "$2,100.00"]);
+  });
+
+  it("refuses a totals row whose value is in a money format we won't guess at", () => {
+    const { stated, refusals } = readTotals([row("Total: $1.501,80")], 2);
+    expect(stated.total).toEqual([]);
+    expect(refusals).toEqual([
+      {
+        id: "totals:total:p2:unparseable",
+        code: "VALUE_UNPARSEABLE",
+        scope: "field",
+        page: 2,
+        lineItemId: null,
+        subject: "Total",
+        reason: 'The total "$1.501,80" uses a comma as the decimal separator, so we didn\'t use it.',
+        evidence: [{ page: 2, sourceText: "Total: $1.501,80" }],
+        calculation: null,
+      },
+    ]);
+  });
+
+  it("refuses a totals value with no dollar sign", () => {
+    const { stated, refusals } = readTotals([row("Subtotal: 2050.00")], 1);
+    expect(stated.subtotal).toEqual([]);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toMatchObject({ id: "totals:subtotal:p1:unparseable", subject: "Subtotal" });
+    expect(refusals[0].reason).toBe('The subtotal "2050.00" has no dollar sign to show it\'s money, so we didn\'t use it.');
+  });
+
+  it("refuses a totals value that isn't money at all", () => {
+    const { stated, refusals } = readTotals([row("GST: TBC"), row("Total: see attached schedule")], 1);
+    expect(stated.gst).toEqual([]);
+    expect(stated.total).toEqual([]);
+    expect(refusals.map((f) => [f.id, f.subject])).toEqual([
+      ["totals:gst:p1:unparseable", "GST"],
+      ["totals:total:p1:unparseable", "Total"],
+    ]);
+  });
+
+  it("gives two unreadable totals on one page different ids", () => {
+    const { refusals } = readTotals([row("Total: TBC"), row("Total due: TBC")], 1);
+    expect(refusals.map((f) => f.id)).toEqual(["totals:total:p1:unparseable", "totals:total:p1:unparseable:2"]);
+  });
+});
+
+describe("mergeTotals", () => {
+  function money(raw: string, value: number, page: number, label = "Total"): SourcedMoney {
+    return { value, raw, per: null, evidence: { page, sourceText: `${label}: ${raw}` } };
+  }
+
+  function statedTotal(...values: SourcedMoney[]): StatedTotals {
+    return { subtotal: [], gst: [], total: values.map((v) => ({ ...v, includesGst: null })) };
+  }
+
+  function statedSubtotal(...values: SourcedMoney[]): StatedTotals {
+    return { subtotal: values, gst: [], total: [] };
+  }
+
+  it("keeps a figure the whole document states once", () => {
+    const { totals, refusals } = mergeTotals([statedTotal(), statedTotal(money("$100.00", 100, 2))]);
+    expect(totals.total?.raw).toBe("$100.00");
+    expect(totals.total?.evidence.page).toBe(2);
+    expect(refusals).toEqual([]);
+  });
+
+  it("keeps the first when one page repeats the same figure", () => {
+    const first = money("$100.00", 100, 1, "Total");
+    const { totals, refusals } = mergeTotals([statedTotal(first, money("$100.00", 100, 1, "Total due"))]);
+    expect(totals.total?.evidence.sourceText).toBe("Total: $100.00");
+    expect(refusals).toEqual([]);
+  });
+
+  it("refuses a kind one page states with two different figures", () => {
+    const { totals, refusals } = mergeTotals([
+      statedTotal(money("$2,050.00", 2050, 1, "Total"), money("$2,100.00", 2100, 1, "Total due")),
+    ]);
     expect(totals.total).toBeNull();
+    expect(refusals).toEqual([
+      {
+        id: "totals:total:conflict",
+        code: "CONTRADICTION",
+        scope: "document",
+        page: 1,
+        lineItemId: null,
+        subject: "Total",
+        reason: "Total is stated as $2,050.00 and $2,100.00 on page 1, so we can't tell which is right.",
+        evidence: [
+          { page: 1, sourceText: "Total: $2,050.00" },
+          { page: 1, sourceText: "Total due: $2,100.00" },
+        ],
+        calculation: null,
+      },
+    ]);
+  });
+
+  it("refuses a kind stated on more than one page, even when the figures match", () => {
+    const { totals, refusals } = mergeTotals([
+      statedSubtotal(money("$327.00", 327, 1, "Subtotal")),
+      statedSubtotal(money("$327.00", 327, 2, "Subtotal")),
+      statedSubtotal(money("$327.00", 327, 3, "Subtotal")),
+    ]);
+    expect(totals.subtotal).toBeNull();
+    expect(refusals).toEqual([
+      {
+        id: "totals:subtotal:per-page",
+        code: "AMBIGUOUS",
+        scope: "document",
+        page: null,
+        lineItemId: null,
+        subject: "Subtotal",
+        reason:
+          "Pages 1, 2 and 3 each state a subtotal ($327.00, $327.00, $327.00). They may be totals for separate invoices, so we haven't reported one subtotal for the whole document.",
+        evidence: [
+          { page: 1, sourceText: "Subtotal: $327.00" },
+          { page: 2, sourceText: "Subtotal: $327.00" },
+          { page: 3, sourceText: "Subtotal: $327.00" },
+        ],
+        calculation: null,
+      },
+    ]);
+  });
+
+  it("refuses per page rather than as a contradiction when pages disagree", () => {
+    const { totals, refusals } = mergeTotals([
+      statedTotal(money("$100.00", 100, 1)),
+      statedTotal(money("$150.00", 150, 2)),
+    ]);
+    expect(totals.total).toBeNull();
+    expect(refusals.map((f) => [f.id, f.code])).toEqual([["totals:total:per-page", "AMBIGUOUS"]]);
+    expect(refusals[0].reason).toContain("Pages 1 and 2 each state a total ($100.00, $150.00)");
+    expect(refusals[0].evidence).toHaveLength(2);
+  });
+
+  it("names the GST figure in a per-page refusal", () => {
+    const gst = (page: number) => ({ ...money("$15.00", 15, page, "GST"), ratePercent: null });
+    const { refusals } = mergeTotals([
+      { subtotal: [], gst: [gst(1)], total: [] },
+      { subtotal: [], gst: [gst(2)], total: [] },
+    ]);
+    expect(refusals[0].reason).toBe(
+      "Pages 1 and 2 each state a GST amount ($15.00, $15.00). They may be totals for separate invoices, so we haven't reported one GST amount for the whole document.",
+    );
+  });
+
+  it("leaves a kind null with no refusal when no page states it", () => {
+    const { totals, refusals } = mergeTotals([statedTotal()]);
+    expect(totals).toEqual({ subtotal: null, gst: null, total: null });
+    expect(refusals).toEqual([]);
   });
 });
 

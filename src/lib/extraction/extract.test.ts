@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { extractDocument, readPage, mergeTotals } from "./extract";
-import { PdfLoadError, type LoadedPage, loadPdf } from "./pdf";
-import { ExtractionResult, type SourcedMoney, type Totals } from "./schema";
+import { extractDocument, readPage } from "./extract";
+import { PdfLoadError, type LoadedPage, type TextItem, loadPdf } from "./pdf";
+import { ExtractionResult } from "./schema";
 import type { Rule } from "./rules/types";
 import { loadSample } from "./test-helpers";
 import { buildRows } from "./rows";
@@ -24,6 +24,7 @@ describe("extractDocument on samples", () => {
     expect(result.totals.gst?.ratePercent).toBe(15);
     expect(result.totals.total?.value).toBe(3747.85);
     expect(result.totals.total?.includesGst).toBe(true);
+    expect(result.refusals).toEqual([]);
   });
 
   it("IB-55902: nothing_extracted, one NO_TEXT_LAYER refusal on page 1", async () => {
@@ -238,47 +239,65 @@ describe("readPage", () => {
       `Something in page 5's content stopped us from reading it, so nothing on it was extracted.${multiPageSuffix}`,
     );
   });
-});
 
-describe("mergeTotals", () => {
-  function money(raw: string, value: number, page: number): SourcedMoney {
-    return { value, raw, per: null, evidence: { page, sourceText: `Total: ${raw}` } };
+  function item(str: string, x: number, y: number): TextItem {
+    return { str, x, y, width: 10 };
   }
 
-  it("keeps the value when every page states the same raw for a kind", () => {
-    const totals: Totals = { subtotal: null, gst: null, total: { ...money("$100.00", 100, 1), includesGst: null } };
-    const { totals: merged, refusals } = mergeTotals([
-      { page: 1, totals },
-      { page: 2, totals: { subtotal: null, gst: null, total: { ...money("$100.00", 100, 2), includesGst: null } } },
-    ]);
+  function pageOf(items: TextItem[]) {
+    return { getPage: async (): Promise<LoadedPage> => ({ page: 1, items, imageCount: 0 }) };
+  }
 
-    expect(merged.total?.raw).toBe("$100.00");
-    expect(refusals).toHaveLength(0);
-  });
+  const HEADER = [
+    item("Code", 42.52, 666),
+    item("Description", 93.54, 666),
+    item("Qty", 325.98, 666),
+    item("Unit", 377.01, 666),
+    item("Unit Price", 428.03, 666),
+    item("Amount", 501.73, 666),
+  ];
 
-  it("nulls the kind and raises a CONTRADICTION when pages disagree", () => {
-    const perPage = [
-      { page: 1, totals: { subtotal: null, gst: null, total: { ...money("$100.00", 100, 1), includesGst: null } } },
-      { page: 2, totals: { subtotal: null, gst: null, total: { ...money("$150.00", 150, 2), includesGst: null } } },
+  function dataRow(code: string, description: string, qty: string, unitPrice: string, amount: string, y: number): TextItem[] {
+    return [
+      item(code, 42.52, y),
+      item(description, 93.54, y),
+      item(qty, 325.98, y),
+      item("ea", 377.01, y),
+      item(unitPrice, 428.03, y),
+      item(amount, 501.73, y),
     ];
-    const { totals: merged, refusals } = mergeTotals(perPage);
+  }
 
-    expect(merged.total).toBeNull();
-    expect(refusals).toHaveLength(1);
-    expect(refusals[0]).toMatchObject({
-      id: "totals:total:conflict",
-      code: "CONTRADICTION",
-      scope: "document",
-      subject: "Total",
-    });
-    expect(refusals[0].evidence).toHaveLength(2);
-    expect(refusals[0].reason).toContain("$100.00");
-    expect(refusals[0].reason).toContain("$150.00");
+  it("a page with no table doesn't turn its totals rows into fields", async () => {
+    const result = await readPage(
+      pageOf([
+        item("Acme Supplies", 42, 785),
+        item("Tax Invoice", 42, 765),
+        item("Invoice No: A-1", 42, 745),
+        item("Item", 42, 666),
+        item("Product", 93, 666),
+        item("Count", 326, 666),
+        item("Subtotal: $1,270.00", 337, 558),
+        item("GST (15%): $190.50", 337, 541),
+        item("Total (incl GST): $1,501.80", 337, 524),
+      ]),
+      1,
+      false,
+    );
+
+    expect(result.fields.map((f) => f.label)).toEqual(["Invoice No"]);
+    expect(result.totals).toEqual({ subtotal: [], gst: [], total: [] });
   });
 
-  it("leaves a kind null with no refusal when no page states it", () => {
-    const { totals, refusals } = mergeTotals([{ page: 1, totals: { subtotal: null, gst: null, total: null } }]);
-    expect(totals).toEqual({ subtotal: null, gst: null, total: null });
-    expect(refusals).toHaveLength(0);
+  it("an unreadable total below the table becomes a refusal on that page", async () => {
+    const result = await readPage(
+      pageOf([...HEADER, ...dataRow("A1", "Widget", "10", "$5.00", "$50.00", 643), item("Total: $1.501,80", 337, 600)]),
+      1,
+      false,
+    );
+
+    expect(result.pageRead.table?.lineItems).toHaveLength(1);
+    expect(result.totals.total).toEqual([]);
+    expect(result.refusals.map((f) => f.id)).toEqual(["totals:total:p1:unparseable"]);
   });
 });
