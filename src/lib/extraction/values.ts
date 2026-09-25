@@ -52,6 +52,32 @@ export function parseQuantity(raw: string): Parsed<number> {
   return { ok: true, value };
 }
 
+const UNITS: Record<string, string> = {
+  kg: "kg", g: "g", t: "t", tonne: "t", tonnes: "t", lb: "lb", lbs: "lb",
+  mm: "mm", cm: "cm", m: "m", km: "km",
+  ml: "mL", l: "L", m2: "m²", "m²": "m²", sqm: "m²", m3: "m³", "m³": "m³",
+};
+// ² and ³ aren't word characters, so a lookahead ends the unit instead of a word boundary.
+const MEASURE_PATTERN = /^(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*(kg|g|tonnes?|t|lbs?|mm|cm|km|m²|m2|m³|m3|m|sqm|ml|l)(?=\s|\/|$)\s*(.*)$/i;
+
+export type Basis = "line" | "each";
+
+export function basisFromWords(words: string): Basis | null {
+  if (/\b(total|all|line)\b/i.test(words)) return "line";
+  if (/\b(each|ea|per|unit)\b|^\//i.test(words)) return "each";
+  return null;
+}
+
+export function parseMeasurement(raw: string): Parsed<{ value: number; unit: string; basis: Basis | null }> {
+  const match = MEASURE_PATTERN.exec(raw.trim());
+  if (!match) return { ok: false, why: "isn't a plain number with a unit" };
+  const [, whole, fraction, unit, rest] = match;
+  const basis = rest ? basisFromWords(rest) : null;
+  if (rest && !basis) return { ok: false, why: `has words after the unit ("${rest}") we don't understand` };
+  const value = Number(whole.replace(/,/g, "") + (fraction ?? ""));
+  return { ok: true, value: { value, unit: UNITS[unit.toLowerCase()], basis } };
+}
+
 export function refusalReason(field: string, raw: string, why: string): string {
   if (raw.trim() === "") return `The ${field} is blank, so we didn't use it.`;
   return `The ${field} "${raw}" ${why}, so we didn't use it.`;

@@ -21,6 +21,12 @@ export const SourcedText = z.object({
   evidence: Evidence,
 });
 
+export const Measurement = SourcedNumber.extend({
+  label: z.string(), // the column it came from, e.g. "Weight"
+  unit: z.string(),
+  basis: z.enum(["line", "each"]), // for the whole line, or for each unit of the quantity
+});
+
 export const LineItem = z.object({
   id: z.string(), // "p1-l3"
   page: z.number().int().min(1),
@@ -31,7 +37,8 @@ export const LineItem = z.object({
   unit: z.string().nullable(),
   unitPrice: SourcedMoney.nullable(),
   amount: SourcedMoney.nullable(),
-  otherColumns: z.array(SourcedText), // columns we show but don't interpret, e.g. Weight
+  otherColumns: z.array(SourcedText), // every non-core column as written, e.g. Weight
+  measurements: z.array(Measurement), // other-column cells we could read as a number and unit
   warningIds: z.array(z.string()),
 });
 
@@ -99,6 +106,7 @@ export type Evidence = z.infer<typeof Evidence>;
 export type SourcedNumber = z.infer<typeof SourcedNumber>;
 export type SourcedMoney = z.infer<typeof SourcedMoney>;
 export type SourcedText = z.infer<typeof SourcedText>;
+export type Measurement = z.infer<typeof Measurement>;
 export type LineItem = z.infer<typeof LineItem>;
 export type FindingCode = z.infer<typeof FindingCode>;
 export type Finding = z.infer<typeof Finding>;

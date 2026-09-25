@@ -22,7 +22,7 @@ function cellsRow(...cells: string[]): Row {
 }
 
 function fakeTable(headerIndex: number, endIndex: number): TableParse {
-  return { header: row("header"), columns: [], lineItems: [], rowFindings: [], headerIndex, endIndex };
+  return { header: row("header"), columns: [], lineItems: [], rowFindings: [], headerIndex, endIndex, measureLabels: [] };
 }
 
 describe("readTitle", () => {

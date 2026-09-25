@@ -249,3 +249,54 @@ describe("odd structure", () => {
     expect(r.totals.total?.raw).toBe("$185.00");
   });
 });
+
+describe("extra columns with measurements, whatever they're called", () => {
+  const withColumn = (label: string) => [
+    { x: 42.5, label: "Code" },
+    { x: 93.5, label: "Description" },
+    { x: 260, label: "Qty" },
+    { x: 300, label: "Unit" },
+    { x: 345, label },
+    { x: 425, label: "Unit Price" },
+    { x: 501.7, label: "Amount" },
+  ];
+
+  it("reads each cell's basis and refuses only the lines that don't give one", async () => {
+    const rows = [
+      ["PP-1", "PVC pipe", "4", "ea", "3m each", "$10.00", "$40.00"],
+      ["PP-2", "Copper pipe", "2", "ea", "12 m total", "$30.00", "$60.00"],
+      ["PP-3", "Conduit", "5", "ea", "2.4m", "$4.00", "$20.00"],
+    ];
+    const r = await extract([invoice({ title: "Delivery Docket", columns: withColumn("Length"), rows })]);
+    expect(r.lineItems[0].measurements[0]).toMatchObject({ label: "Length", value: 3, unit: "m", basis: "each" });
+    expect(r.lineItems[1].measurements[0]).toMatchObject({ value: 12, unit: "m", basis: "line" });
+    expect(r.lineItems[2].measurements).toEqual([]);
+    expect(r.refusals.find((f) => f.id === "measure:p1-l3:length")?.reason).toContain("for each item or for all 5");
+    expect(ids(r)).toContain("ambiguous:total:length");
+  });
+
+  it("takes the basis from the header, and doesn't refuse a total it could safely add", async () => {
+    const rows = [
+      ["AC-1", "Timber stud 90x45", "10", "length", "45kg", "$12.50", "$125.00"],
+      ["AC-2", "Nails 75mm", "2", "box", "5kg", "$30.00", "$60.00"],
+    ];
+    const r = await extract([invoice({ title: "Delivery Docket", columns: withColumn("Total Weight"), rows })]);
+    expect(r.lineItems.map((i) => i.measurements[0]?.basis)).toEqual(["line", "line"]);
+    expect(r.refusals).toEqual([]);
+  });
+
+  it("refuses a measurement it can't read, and leaves plain text columns alone", async () => {
+    const rows = [
+      ["AC-1", "Timber stud 90x45", "10", "length", "approx 45kg", "$12.50", "$125.00"],
+      ["AC-2", "Nails 75mm", "2", "box", "5kg total", "$30.00", "$60.00"],
+    ];
+    const weights = await extract([invoice({ title: "Delivery Docket", columns: withColumn("Weight"), rows })]);
+    expect(weights.refusals.find((f) => f.id === "measure:p1-l1:weight")?.code).toBe("VALUE_UNPARSEABLE");
+
+    const colours = rows.map((row) => [...row.slice(0, 4), "Treated pine", ...row.slice(5)]);
+    const text = await extract([invoice({ title: "Delivery Docket", columns: withColumn("Colour"), rows: colours })]);
+    expect(text.refusals).toEqual([]);
+    expect(text.lineItems[0].otherColumns[0].raw).toBe("Treated pine");
+  });
+});
+

@@ -37,14 +37,7 @@ export function LineItemsTable({ items, refusals }: { items: LineItem[]; refusal
                   className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
                 >
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{item.code ?? "—"}</td>
-                  <td className="px-3 py-2">
-                    {item.description}
-                    {item.otherColumns.map((c) => (
-                      <span key={c.label} className="ml-2 text-xs text-zinc-500">
-                        {c.label}: {c.raw}
-                      </span>
-                    ))}
-                  </td>
+                  <td className="px-3 py-2">{item.description}</td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     <Cell value={item.quantity?.raw} missing="unclear" />
                   </td>
@@ -55,7 +48,7 @@ export function LineItemsTable({ items, refusals }: { items: LineItem[]; refusal
                     <Cell value={item.unitPrice?.raw} missing="not stated" />
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    <Cell value={item.amount?.raw} missing={refusedFor(item.id).length ? "refused" : "not stated"} />
+                    <Cell value={item.amount?.raw} missing={refusedFor(item.id).some((r) => r.id.endsWith(":amount") && !r.id.startsWith("missing:")) ? "refused" : "not stated"} />
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-zinc-500">
                     p. {item.page}
