@@ -1,5 +1,7 @@
 import type { Evidence, Finding } from "../schema";
 import type { Rule, RuleContext } from "./types";
+import { slug } from "../measurements";
+import { parseMeasurement } from "../values";
 import { finding, rowEvidence } from "./finding";
 
 function tablesLackAmounts(ctx: RuleContext): boolean {
@@ -15,7 +17,7 @@ function missingAmounts(ctx: RuleContext): Finding[] {
         id: "missing:amounts",
         code: "NOT_STATED",
         subject: ctx.totals.total ? "Line amounts" : "Line amounts and total",
-        reason: `This document has no Amount column${tail}. We haven't multiplied quantities by prices ourselves; they're listed as written.`,
+        reason: `This document has no Amount column${tail}.`,
         evidence: [],
       }),
     ];
@@ -33,7 +35,7 @@ function missingAmounts(ctx: RuleContext): Finding[] {
         page: i.page,
         lineItemId: i.id,
         subject: `Amount for ${i.code ?? i.description}`,
-        reason: "This line has no amount, so we haven't worked one out.",
+        reason: "This line has no amount, so I haven't worked one out.",
         evidence: [i.evidence],
       }),
     );
@@ -53,32 +55,48 @@ function missingGst(ctx: RuleContext): Finding[] {
   const label = taxInvoiceEvidence(ctx);
   if (!label) return [];
   const reason = total
-    ? `This is labelled a tax invoice but doesn't show GST separately, so we can't tell whether the total of ${total.raw} includes GST.`
-    : "This is labelled a tax invoice but doesn't show a GST amount, so we haven't reported one.";
+    ? `This is labelled a tax invoice but doesn't show GST separately, so I can't tell whether the total of ${total.raw} includes GST.`
+    : "This is labelled a tax invoice but doesn't show a GST amount, so I haven't reported one.";
   return [finding({ id: "missing:gst", code: "NOT_STATED", subject: "GST", reason, evidence: [label] })];
 }
 
-function ambiguousWeights(ctx: RuleContext): Finding[] {
-  const weights = ctx.lineItems.flatMap((i) => i.otherColumns.filter((c) => /weight/i.test(c.label)));
-  if (weights.length === 0) return [];
-  const units = new Set(weights.map((w) => w.raw.match(/[a-z]+/i)?.[0].toLowerCase()));
-  const someTotal = weights.some((w) => /total/i.test(w.raw));
-  const allTotal = weights.every((w) => /total/i.test(w.raw));
-  if (units.size <= 1 && (allTotal || !someTotal)) return [];
+function listInWords(parts: string[]): string {
+  return parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
 
-  const notes = ctx.pages.flatMap((p) =>
-    p.freeText.filter((r) => /weight/i.test(r.text)).map((r) => rowEvidence(r, p.page)),
-  );
-  return [
-    finding({
-      id: "ambiguous:weight",
-      code: "AMBIGUOUS",
-      subject: "Total weight",
-      reason:
-        "Weights are written in different units and only some say they're for the whole line, so we can't tell whether each figure is per item or per line. We've shown them as written and haven't added them up.",
-      evidence: notes.length > 0 ? notes : weights.map((w) => w.evidence),
-    }),
-  ];
+// Adding up a measurement column is only safe when every line was read, on one basis, in one unit.
+function unsafeMeasurementTotals(ctx: RuleContext): Finding[] {
+  const labels = [...new Set(ctx.pages.flatMap((p) => p.table?.measureLabels ?? []))];
+  return labels.flatMap((label) => {
+    const cells = ctx.lineItems.flatMap((i) => i.otherColumns.filter((c) => c.label === label));
+    const read = ctx.lineItems.flatMap((i) => i.measurements.filter((m) => m.label === label));
+    const units = new Set(cells.flatMap((c) => {
+      const parsed = parseMeasurement(c.raw);
+      return parsed.ok ? [parsed.value.unit] : [];
+    }));
+    const bases = new Set(read.map((m) => m.basis));
+
+    const problems: string[] = [];
+    const unclear = cells.length - read.length;
+    if (unclear > 0) problems.push(`${unclear} of ${cells.length} lines don't say clearly what their figure covers`);
+    if (bases.size > 1) problems.push("some figures are for the whole line and some for each unit");
+    if (units.size > 1) problems.push(`the figures are in different units (${listInWords([...units])})`);
+    if (problems.length === 0) return [];
+
+    const word = label.toLowerCase();
+    const notes = ctx.pages.flatMap((p) =>
+      p.freeText.filter((r) => r.text.toLowerCase().includes(word)).map((r) => rowEvidence(r, p.page)),
+    );
+    return [
+      finding({
+        id: `ambiguous:total:${slug(label)}`,
+        code: "AMBIGUOUS",
+        subject: `Total ${word}`,
+        reason: `We haven't added up the ${word} because ${listInWords(problems)}. Each line's ${word} is shown as written.`,
+        evidence: notes.length > 0 ? notes : cells.map((c) => c.evidence),
+      }),
+    ];
+  });
 }
 
 function missingDocumentTotal(ctx: RuleContext): Finding[] {
@@ -90,7 +108,7 @@ function missingDocumentTotal(ctx: RuleContext): Finding[] {
       id: "missing:total",
       code: "NOT_STATED",
       subject: "Document total",
-      reason: "No page of this document states a total, so we haven't reported one. We don't add up line items ourselves.",
+      reason: "No page of this document states a total, so I haven't reported one. I don't add up line items myself.",
       evidence: [],
     }),
   ];
@@ -111,7 +129,7 @@ function unrecognisedFigures(ctx: RuleContext): Finding[] {
           scope: "field",
           page: p.page,
           subject: label,
-          reason: `The document shows "${r.text}", but we don't recognise "${label}" as a subtotal, GST or total, so we haven't used that figure.`,
+          reason: `The document shows "${r.text}", but I don't recognise "${label}" as a subtotal, GST or total, so I haven't used that figure.`,
           evidence: [rowEvidence(r, p.page)],
         });
       }),
@@ -122,7 +140,7 @@ export const completeness: Rule = (ctx) => ({
   refusals: [
     ...missingAmounts(ctx),
     ...missingGst(ctx),
-    ...ambiguousWeights(ctx),
+    ...unsafeMeasurementTotals(ctx),
     ...missingDocumentTotal(ctx),
     ...unrecognisedFigures(ctx),
   ],
