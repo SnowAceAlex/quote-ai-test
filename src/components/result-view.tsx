@@ -1,6 +1,7 @@
 import type { ExtractionResult, SourcedMoney } from "@/lib/extraction/schema";
 import { FindingCard } from "./finding-card";
 import { LineItemsTable } from "./line-items-table";
+import { OtherColumnsTables } from "./other-columns-tables";
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -95,6 +96,8 @@ export function ResultView({ result }: { result: ExtractionResult }) {
           <LineItemsTable items={result.lineItems} refusals={result.refusals} />
         </section>
       )}
+
+      <OtherColumnsTables items={result.lineItems} refusals={result.refusals} />
 
       {hasTotals && (
         <section>

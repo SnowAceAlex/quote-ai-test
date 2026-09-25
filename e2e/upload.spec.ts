@@ -37,6 +37,10 @@ test.describe("samples", () => {
     await expect(page.getByRole("heading", { name: "Line amounts and total" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Total weight" })).toBeVisible();
     await expect(page.getByRole("cell", { name: "refused" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Other columns" })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "640 g", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "whole line" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "not used" })).toHaveCount(3);
   });
 
   test("IB-56088 quotes both carton counts", async ({ page }) => {
