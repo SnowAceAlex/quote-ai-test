@@ -98,6 +98,15 @@ test.describe("failures reach the person in plain words", () => {
     await expect(failure(page)).toContainText("The server's reply was incomplete");
   });
 
+  test("cancelling while the sample is still downloading", async ({ page }) => {
+    await page.route("**/samples/*.pdf", () => new Promise(() => {}));
+    await page.goto("/");
+    await page.getByRole("button", { name: "IB-55871" }).click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(failure(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "IB-55871" })).toBeEnabled();
+  });
+
   test("cancelling returns to the start without an error", async ({ page }) => {
     await page.route("**/api/extract", () => new Promise(() => {}));
     await page.goto("/");

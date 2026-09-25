@@ -13,7 +13,7 @@ Insta Quote AI take-home (Full Stack Engineer).
 pnpm install
 pnpm dev          # http://localhost:3000, with "Try a sample" buttons for the six PDFs
 pnpm test         # 253 unit/integration tests
-pnpm e2e          # 12 browser tests against a production build (uses installed Edge; E2E_CHANNEL=chrome to switch)
+pnpm e2e          # 13 browser tests against a production build (uses installed Edge; E2E_CHANNEL=chrome to switch)
 pnpm typecheck && pnpm lint && pnpm build
 ```
 
@@ -110,7 +110,7 @@ This isn't specific to Weight or to this file. Any extra column whose cells read
 - **Structural assumptions.** The first two lines of a page are assumed to be the company name and the document title. A line's evidence text is its text runs joined by single spaces. That matches the visible line, but it isn't byte-for-byte what's in the PDF content stream.
 - **A crash in a rule fails the whole request (500)** instead of being contained per rule. I chose this deliberately, because a rule that crashed must not look like a check that passed. Even so, it means one bug can hide an otherwise good result.
 - **Currency.** Values keep their `$` symbol.
-- **The UI** is covered by the client tests and 12 Playwright tests in Edge. It hasn't been tested in Safari or Firefox, or audited for accessibility beyond sensible defaults.
+- **The UI** is covered by the client tests and 13 Playwright tests in Edge. It hasn't been tested in Safari or Firefox, or audited for accessibility beyond sensible defaults.
 
 ## With three more days
 

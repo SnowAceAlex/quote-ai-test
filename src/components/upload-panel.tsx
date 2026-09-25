@@ -24,26 +24,31 @@ export function UploadPanel() {
   const abort = useRef<AbortController | null>(null);
   const busy = state.status === "busy";
 
-  async function run(file: File) {
+  async function run(file: File, controller = new AbortController()) {
     const problem = checkBeforeUpload(file);
     if (problem) return setState({ status: "failed", failure: problem });
 
-    abort.current = new AbortController();
+    abort.current = controller;
     setState({ status: "busy", message: `Reading ${file.name} (${formatSize(file.size)})…` });
-    const outcome = await uploadForExtraction(file, abort.current.signal);
+    const outcome = await uploadForExtraction(file, controller.signal);
     if (outcome.kind === "cancelled") setState({ status: "idle" });
     else if (outcome.kind === "failed") setState({ status: "failed", failure: outcome.failure });
     else setState({ status: "done", result: outcome.data });
   }
 
   async function runSample(name: string) {
+    // One controller for both steps, so Cancel also works while the sample is still downloading.
+    const controller = new AbortController();
+    abort.current = controller;
     setState({ status: "busy", message: `Fetching sample ${name}.pdf…` });
+    let file: File;
     try {
-      const response = await fetch(`/samples/${name}.pdf`);
+      const response = await fetch(`/samples/${name}.pdf`, { signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await run(new File([await response.blob()], `${name}.pdf`, { type: "application/pdf" }));
+      file = new File([await response.blob()], `${name}.pdf`, { type: "application/pdf" });
     } catch (error) {
-      setState({
+      if (controller.signal.aborted) return setState({ status: "idle" });
+      return setState({
         status: "failed",
         failure: {
           title: "Couldn't load the sample",
@@ -53,6 +58,7 @@ export function UploadPanel() {
         },
       });
     }
+    await run(file, controller);
   }
 
   return (
