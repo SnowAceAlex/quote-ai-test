@@ -18,7 +18,7 @@ export async function assertTraceable(result: ExtractionResult, bytes: Uint8Arra
 
   const sourced = [
     ...result.fields,
-    ...result.lineItems.flatMap((i) => [i.quantity, i.unitPrice, i.amount, ...i.otherColumns]),
+    ...result.lineItems.flatMap((i) => [i.quantity, i.unitPrice, i.amount, ...i.otherColumns, ...i.measurements]),
     result.totals.subtotal,
     result.totals.gst,
     result.totals.total,

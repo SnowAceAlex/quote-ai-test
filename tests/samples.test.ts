@@ -38,7 +38,18 @@ describe("sample documents", () => {
     expect(r.lineItems).toHaveLength(4);
     expect(r.lineItems.every((i) => i.amount === null)).toBe(true);
     expect(r.totals).toEqual({ subtotal: null, gst: null, total: null });
-    expect(refusalIds(r)).toEqual(["ambiguous:weight", "missing:amounts", "missing:gst"]);
+    expect(refusalIds(r)).toEqual([
+      "ambiguous:total:weight",
+      "measure:p1-l1:weight",
+      "measure:p1-l3:weight",
+      "measure:p1-l4:weight",
+      "missing:amounts",
+      "missing:gst",
+    ]);
+    // The one weight that says what it covers is kept as a number, with its source.
+    expect(r.lineItems[1].measurements).toEqual([
+      expect.objectContaining({ label: "Weight", value: 640, unit: "g", basis: "line", raw: "640g total" }),
+    ]);
   });
 
   it("IB-56088 refuses the carton count, quoting both statements", () => {
@@ -99,7 +110,7 @@ describe("every value points at its source", () => {
 
     const sourced = [
       ...r.fields,
-      ...r.lineItems.flatMap((i) => [i.quantity, i.unitPrice, i.amount, ...i.otherColumns]),
+      ...r.lineItems.flatMap((i) => [i.quantity, i.unitPrice, i.amount, ...i.otherColumns, ...i.measurements]),
       r.totals.subtotal,
       r.totals.gst,
       r.totals.total,
