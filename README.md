@@ -90,6 +90,16 @@ A test checks that none of these messages says "something went wrong".
 
 I extract them, attach a page-level warning to every one of those lines, and never add up a statement total. If the product were pricing directly from this output, I'd lean toward refusing them instead.
 
+**Third: what to do with a column like Weight on IB-56010.** Every weight there is clearly printed, so each one has a source. What's missing is what the number *covers*. `20kg` next to a quantity of 3 cartons could be 20 kg per carton or 20 kg for all three. Only one line says (`640g total`), and the footer says the figures are "unconverted" and gives no total. Read one way the consignment is about 22.5 kg; read the other way it's about 71.6 kg.
+
+Three options I considered:
+
+- **Keep the column as text only.** This was my first version. It's safe, but it throws away `640g total`, which is unambiguous.
+- **Assume each figure is for the whole line**, as most dockets do. That's a guess, and here it's a guess the document itself argues against: one line says "total" and the others don't.
+- **Keep a figure only when it says what it covers** (chosen). The cell says so (`total`, `each`, `per carton`, `/carton`) or the header does (`Total Weight`, `Weight (each)`). Otherwise that one cell is refused, and the reason gives both readings. A column total is only refused when adding up the lines really isn't safe: some lines unclear, whole-line and per-unit figures mixed, or different units.
+
+This isn't specific to Weight or to this file. Any extra column whose cells read as a number with a unit (kg, m, L, m², …) is treated the same way; the tests run it on generated Length and Total Weight columns. The cost: an invoice with a plain `Weight` column and no qualifiers anywhere gets every weight refused. That's cautious, but a quote that uses weight for freight can be off by the quantity multiplier, so I'd rather ask a person than pick.
+
 ## Where I'm not confident
 
 - **I've seen one supplier.** All six samples come from the same generator. Table detection relies on a header row containing `Description` and `Qty`, and on left-aligned columns. Right-aligned numbers under a narrow header can land in the wrong column. This usually fails safe (the value doesn't parse and becomes a refusal), but not always.
