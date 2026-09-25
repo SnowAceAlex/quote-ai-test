@@ -12,7 +12,7 @@ Insta Quote AI take-home (Full Stack Engineer).
 ```bash
 pnpm install
 pnpm dev          # http://localhost:3000, with "Try a sample" buttons for the six PDFs
-pnpm test         # 238 unit/integration tests
+pnpm test         # 253 unit/integration tests
 pnpm e2e          # 12 browser tests against a production build (uses installed Edge; E2E_CHANNEL=chrome to switch)
 pnpm typecheck && pnpm lint && pnpm build
 ```
@@ -27,7 +27,7 @@ curl -F file=@public/samples/IB-56150.pdf http://localhost:3000/api/extract
 |---|---|---|
 | IB-55871 | Nothing | 4 lines, subtotal, GST and total, all checked. `complete`, no refusals. |
 | IB-55902 | A scanned image with no text layer | Refuses page 1: "a scanned image with no readable text". Returns HTTP 200 with `nothing_extracted`, not an error. |
-| IB-56010 | No Amount column and no totals. Weights mix kg and g, and only one says "total". Labelled Tax Invoice but shows no GST. | Extracts quantities and unit prices, keeping the price basis (`$74.00 /carton`). Refuses line amounts, GST and total weight. It never multiplies anything out. |
+| IB-56010 | No Amount column and no totals. Weights mix kg and g, and only one says "total". Labelled Tax Invoice but shows no GST. | Extracts quantities and unit prices, keeping the price basis (`$74.00 /carton`). Reads `640g total` as 640 g for the whole line. Refuses the other three weights one line at a time, because "20kg" for 3 cartons could mean either. Also refuses line amounts, GST and total weight. It never multiplies anything out. |
 | IB-56088 | Says "9 cartons dispatched" and "11 cartons picked" | Refuses the carton count and quotes both lines. Keeps the stated `$2,050.00` total, but refuses GST because it can't tell whether the total includes GST. |
 | IB-56150 | Total (incl GST) is $1,501.80, but $1,270.00 + $190.50 = $1,460.50 | Keeps the subtotal and GST. Refuses the total and shows the calculation and all three source lines. |
 | IB-STMT47 | 8 pages. Page 4 is a scan. Pages 5–8 aren't invoices but still list priced lines. No totals. | 21 lines from the 7 readable pages. Refuses only page 4. Warns that invoice 4 of 4 is missing and that pages 5–8 may repeat or offset invoice lines. Refuses a document total. |
@@ -51,6 +51,7 @@ Writing these found three real bugs, now fixed:
 `src/lib/extraction/schema.ts` defines the contract as zod schemas. Both the API and the UI validate against it.
 
 - **`lineItems[]`:** each number is `{ value, raw, evidence: { page, sourceText } }`. `raw` is the text exactly as printed.
+- **`measurements`:** cells in extra columns that read as a number with a unit (`20kg`, `3m each`, `2.5 m²`), whatever the column is called. A cell is only kept when it says what it covers, or the header does (`total` means the whole line; `each`, `per …`, `/carton` mean each unit). Otherwise that cell is refused on its own. `otherColumns` keeps every extra cell exactly as written.
 - **`totals`:** subtotal, GST (with the rate read from its label, never hard-coded) and total. A figure that fails a check is **removed** from here and moved into `refusals`, so everything left can be used without reading the refusals first.
 - **`refusals[]`:** what wasn't extracted. Each entry has a code, a subject, a plain-English reason, the source lines and, for arithmetic, the `calculation`.
 - **`warnings[]`:** extracted, but a person should check it. Line items point to their warnings through `warningIds`.
@@ -94,7 +95,7 @@ I extract them, attach a page-level warning to every one of those lines, and nev
 - **I've seen one supplier.** All six samples come from the same generator. Table detection relies on a header row containing `Description` and `Qty`, and on left-aligned columns. Right-aligned numbers under a narrow header can land in the wrong column. This usually fails safe (the value doesn't parse and becomes a refusal), but not always.
 - **The totals vocabulary is a whitelist.** It recognises `Subtotal`, `GST (15%)`, `Total`, `Total (incl GST)`, `Total due` and a few variants. Any other `Label: $amount` row (e.g. `Amount due: $500.00`) is refused as "not recognised" rather than used. That's safe, but it means an unusual invoice layout comes back mostly refused.
 - **Discounts.** On a table with a discount column, the qty × price check is skipped entirely, because I don't know how each supplier applies the discount.
-- **The rules are narrower than their names.** The contradiction rule only looks for counts of cartons, boxes, pallets, packages, parcels and bundles. The weight rule only fires on a column labelled "Weight". Section detection relies on page titles that say "Invoice N of M".
+- **The rules are narrower than their names.** The contradiction rule only looks for counts of cartons, boxes, pallets, packages, parcels and bundles. Measurement cells are recognised by a fixed list of units (kg, g, t, lb, mm, cm, m, km, L, mL, m², m³). Section detection relies on page titles that say "Invoice N of M".
 - **No OCR.** Scanned pages are refused. That's correct under the rules, but it means a scanned invoice returns nothing.
 - **Structural assumptions.** The first two lines of a page are assumed to be the company name and the document title. A line's evidence text is its text runs joined by single spaces. That matches the visible line, but it isn't byte-for-byte what's in the PDF content stream.
 - **A crash in a rule fails the whole request (500)** instead of being contained per rule. I chose this deliberately, because a rule that crashed must not look like a check that passed. Even so, it means one bug can hide an otherwise good result.
