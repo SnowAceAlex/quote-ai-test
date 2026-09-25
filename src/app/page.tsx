@@ -6,8 +6,7 @@ export default function Home() {
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Supplier document reader</h1>
         <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-400">
-          Upload a supplier PDF and we&apos;ll pull out its line items. Every figure shows the page and line it
-          came from. Anything we can&apos;t read reliably is listed with the reason, instead of being guessed.
+          Created by Bui Cong Vinh - <a href="mailto:alexvinh2911@gmail.com" className="hover:underline">alexvinh2911@gmail.com</a>
         </p>
       </header>
       <UploadPanel />

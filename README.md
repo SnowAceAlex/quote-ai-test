@@ -5,7 +5,7 @@ Insta Quote AI take-home (Full Stack Engineer).
 - **Part A:** `POST /api/extract` takes a PDF and returns JSON. The JSON lists the line items it could extract, each carrying the page and the exact source line, and a separate list of everything it refused to extract, with the reason.
 - **Part B:** a single page that uploads a file to Part A and shows the result. Refusals come first, in plain language.
 
-**Live:** _deployment URL goes here_ · Stack: Next.js 16, TypeScript, zod, `unpdf` (pdf.js), Vitest, deployed on Vercel.
+**Live:** <https://quote-ai-test.vercel.app/> · Stack: Next.js 16, TypeScript, zod, `unpdf` (pdf.js), Vitest, deployed on Vercel.
 
 ## Run it
 
@@ -80,7 +80,7 @@ A test checks that none of these messages says "something went wrong".
 
 ## The hardest decision
 
-**No LLM in the extraction path.** For a product called Insta Quote *AI*, the obvious move was to send the PDF to a model and ask for JSON. I didn't:
+**No LLM in the extraction path.** The obvious move was to send the PDF to a model and ask for JSON. I didn't:
 
 - **Why:** the hard rule is that every number must point to its source. A model can paraphrase a line, normalise `$1,248.00` to `1248`, or invent a value that looks plausible, and I would then need a deterministic check that each value really appears on the page. Once that check exists, it does most of the work anyway.
 - **What I built instead:** the whole path is deterministic. Evidence is exact by construction, and the behaviour is fully testable.
@@ -109,7 +109,7 @@ This isn't specific to Weight or to this file. Any extra column whose cells read
 - **No OCR.** Scanned pages are refused. That's correct under the rules, but it means a scanned invoice returns nothing.
 - **Structural assumptions.** The first two lines of a page are assumed to be the company name and the document title. A line's evidence text is its text runs joined by single spaces. That matches the visible line, but it isn't byte-for-byte what's in the PDF content stream.
 - **A crash in a rule fails the whole request (500)** instead of being contained per rule. I chose this deliberately, because a rule that crashed must not look like a check that passed. Even so, it means one bug can hide an otherwise good result.
-- **Currency.** Values keep their `$` symbol. The service never claims NZD or AUD, even though a 15% GST suggests NZ.
+- **Currency.** Values keep their `$` symbol.
 - **The UI** is covered by the client tests and 12 Playwright tests in Edge. It hasn't been tested in Safari or Firefox, or audited for accessibility beyond sensible defaults.
 
 ## With three more days
