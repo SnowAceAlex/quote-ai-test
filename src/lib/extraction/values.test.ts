@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMoney, parseQuantity, parsePercent, formatCents, refusalReason, type Parsed } from "./values";
+import { parseMoney, parseQuantity, parsePercent, formatCents, refusalReason, parseMeasurement, type Parsed } from "./values";
 
 function refusalSentence(field: string, raw: string, result: Parsed<unknown>): string {
   if (result.ok) throw new Error(`expected "${raw}" to be refused`);
@@ -99,3 +99,22 @@ describe("formatCents", () => {
     expect(formatCents(cents)).toBe(expected);
   });
 });
+
+describe("parseMeasurement", () => {
+  it.each([
+    ["20kg", { value: 20, unit: "kg", basis: null }],
+    ["640g total", { value: 640, unit: "g", basis: "line" }],
+    ["1.4 kg", { value: 1.4, unit: "kg", basis: null }],
+    ["3m each", { value: 3, unit: "m", basis: "each" }],
+    ["2.5 m² per sheet", { value: 2.5, unit: "m²", basis: "each" }],
+    ["1,200 L", { value: 1200, unit: "L", basis: null }],
+    ["20kg/carton", { value: 20, unit: "kg", basis: "each" }],
+  ])("%s", (raw, expected) => {
+    expect(parseMeasurement(raw)).toEqual({ ok: true, value: expected });
+  });
+
+  it.each(["approx 20kg", "20", "20 kilos", "20kg roughly", "Treated pine"])("refuses %s", (raw) => {
+    expect(parseMeasurement(raw).ok).toBe(false);
+  });
+});
+

@@ -1,6 +1,7 @@
 import type { Row } from "./rows";
 import { matchTotalsLabel, matchTotalsRow } from "./document";
 import { parseMoney, parseQuantity, refusalReason } from "./values";
+import { readMeasurements } from "./measurements";
 import type { Evidence, Finding, LineItem, SourcedMoney, SourcedNumber, SourcedText } from "./schema";
 
 export type Column = {
@@ -16,6 +17,7 @@ export type TableParse = {
   rowFindings: Finding[];
   headerIndex: number;
   endIndex: number;
+  measureLabels: string[];
 };
 
 const DASHED_ROW = /^[-_=]+$/;
@@ -208,6 +210,7 @@ function buildLineItem(row: Row, columns: Column[], page: number, n: number): { 
     unitPrice,
     amount,
     otherColumns,
+    measurements: [],
     warningIds: [],
   };
 
@@ -227,7 +230,7 @@ export function parseTable(rows: Row[], page: number): TableParse | null {
   }
 
   if (dataRowIndices.length === 0) {
-    return { header, columns, lineItems: [], rowFindings: [], headerIndex, endIndex: rows.length };
+    return { header, columns, lineItems: [], rowFindings: [], headerIndex, endIndex: rows.length, measureLabels: [] };
   }
 
   const baseline = header.y - rows[dataRowIndices[0]].y;
@@ -261,5 +264,9 @@ export function parseTable(rows: Row[], page: number): TableParse | null {
     rowFindings.push(...findings);
   });
 
-  return { header, columns, lineItems, rowFindings, headerIndex, endIndex };
+  const otherLabels = columns.filter((c) => c.role === "other").map((c) => c.label);
+  const { findings: measureFindings, measureLabels } = readMeasurements(lineItems, otherLabels, page);
+  rowFindings.push(...measureFindings);
+
+  return { header, columns, lineItems, rowFindings, headerIndex, endIndex, measureLabels };
 }
